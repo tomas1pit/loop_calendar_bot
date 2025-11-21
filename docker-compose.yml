@@ -2,8 +2,7 @@ version: '3.8'
 
 services:
   loop-calendar-bot:
-    image: calendar_bot:latest
-    build: .
+    image: loop-calendar_bot:latest
     container_name: loop-calendar-bot
     restart: unless-stopped
     environment:
