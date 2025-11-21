@@ -6,5 +6,5 @@ python-dotenv==1.0.0
 pytz==2023.3
 sqlalchemy==2.0.23
 websockets==12.0
-icalendar==5.1.0
+icalendar==6.3.2
 python-dateutil==2.8.2
