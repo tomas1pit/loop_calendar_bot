@@ -1,0 +1,395 @@
+import asyncio
+import logging
+from datetime import datetime
+import json
+from typing import Dict
+from config import Config
+from database import DatabaseManager, User
+from mattermost_manager import MattermostManager
+from bot_logic import BotLogic
+from ui_messages import UIMessages, ButtonActions
+from notification_manager import NotificationManager
+from ws_listener import MattermostWebSocketListener
+from web_handler import start_web_server
+import re
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class Bot:
+    def __init__(self):
+        self.db = DatabaseManager(Config.DB_PATH)
+        self.mm = MattermostManager(Config.MATTERMOST_BASE_URL, 
+                                    Config.MATTERMOST_BOT_TOKEN,
+                                    Config.BOT_NAME)
+        self.logic = BotLogic(self.db, self.mm)
+        self.notification_manager = NotificationManager(self.db, self.mm)
+        self.ws_listener = MattermostWebSocketListener(self)
+        self.running = False
+        self.web_runner = None
+    
+    def start(self):
+        """Запустить бота"""
+        logger.info("Starting calendar bot...")
+        
+        if not self.mm.connect():
+            logger.error("Failed to connect to Mattermost")
+            return False
+        
+        logger.info("Bot connected successfully")
+        self.running = True
+        
+        # Запустить основной цикл
+        try:
+            asyncio.run(self.run_main_loop())
+        except KeyboardInterrupt:
+            logger.info("Bot interrupted")
+        finally:
+            self.stop()
+        
+        return True
+    
+    def stop(self):
+        """Остановить бота"""
+        logger.info("Stopping bot...")
+        self.running = False
+        
+        # Остановить WebSocket
+        asyncio.run(self.ws_listener.disconnect())
+        
+        # Остановить веб-сервер
+        if self.web_runner:
+            asyncio.run(self.web_runner.cleanup())
+        
+        self.mm.disconnect()
+        self.db.close()
+    
+    async def run_main_loop(self):
+        """Основной цикл бота"""
+        # Запустить веб-сервер для обработки действий
+        self.web_runner = await start_web_server(self, "0.0.0.0", 8080)
+        
+        # Запустить WebSocket слушатель
+        ws_task = asyncio.create_task(self.ws_listener.connect())
+        
+        # Запустить цикл проверки уведомлений
+        check_task = asyncio.create_task(self.check_notifications_loop())
+        
+        try:
+            await asyncio.gather(ws_task, check_task)
+        except Exception as e:
+            logger.error(f"Error in main loop: {e}")
+        finally:
+            self.running = False
+    
+    async def check_notifications_loop(self):
+        """Цикл проверки и отправки уведомлений"""
+        while self.running:
+            try:
+                # Получить всех пользователей
+                session = self.db.get_session()
+                try:
+                    users = session.query(User).all()
+                finally:
+                    session.close()
+                
+                # Проверить уведомления для каждого пользователя
+                notification_count = await self.notification_manager.check_and_notify(users)
+                
+                if notification_count > 0:
+                    logger.info(f"Sent {notification_count} notifications")
+                
+                await asyncio.sleep(Config.CHECK_INTERVAL)
+            
+            except Exception as e:
+                logger.error(f"Error in notifications loop: {e}")
+                await asyncio.sleep(Config.CHECK_INTERVAL)
+    
+    async def handle_message(self, user_id: str, message: str, channel_id: str):
+        """Обработать входящее сообщение"""
+        logger.info(f"Message from {user_id}: {message}")
+        
+        # Проверить, упоминается ли бот
+        if f"@{Config.BOT_NAME}" not in message:
+            return
+        
+        # Получить пользователя
+        user = self.logic.get_user(user_id)
+        
+        if not user:
+            # Пользователь не авторизован
+            await self.show_auth_prompt(user_id, channel_id)
+            return
+        
+        # Получить состояние пользователя
+        user_state = self.logic.get_user_state(user_id)
+        
+        if user_state:
+            # Пользователь находится в процессе диалога
+            await self.handle_dialog_step(user_id, channel_id, user_state, message)
+        else:
+            # Показать главное меню
+            await self.show_main_menu(user_id, channel_id)
+    
+    async def handle_auth_message(self, user_id: str, channel_id: str, password: str):
+        """Обработать ввод пароля при авторизации"""
+        user = self.logic.get_user(user_id)
+        
+        if not user:
+            # Получить email пользователя Mattermost
+            mm_user = self.mm.driver.users.get_user(user_id)
+            email = mm_user.get('email', '')
+            
+            if not email:
+                await self.mm.send_message(channel_id, 
+                    "Не удалось получить ваш email. Пожалуйста, попробуйте позже.")
+                return
+            
+            # Создать пользователя с новым паролем
+            new_user = self.logic.create_user(user_id, email, password)
+            logger.info(f"User {user_id} authenticated with email {email}")
+            
+            # Показать главное меню
+            await self.show_main_menu(user_id, channel_id)
+    
+    async def show_auth_prompt(self, user_id: str, channel_id: str):
+        """Показать запрос авторизации"""
+        try:
+            mm_user = self.mm.driver.users.get_user(user_id)
+            email = mm_user.get('email', '')
+            
+            message = UIMessages.auth_required(email)
+            self.mm.send_message(channel_id, message)
+            
+            # Установить состояние ожидания пароля
+            self.logic.set_user_state(user_id, "awaiting_password", 
+                                     {"email": email})
+        except Exception as e:
+            logger.error(f"Error showing auth prompt: {e}")
+            self.mm.send_message(channel_id, "Произошла ошибка. Пожалуйста, попробуйте позже.")
+    
+    async def show_main_menu(self, user_id: str, channel_id: str):
+        """Показать главное меню"""
+        try:
+            message = UIMessages.main_menu_message()
+            
+            # Создать интерактивные кнопки
+            attachments = [{
+                "fallback": "Main Menu",
+                "color": "#3AA3E3",
+                "actions": [
+                    {
+                        "name": "Все встречи на сегодня",
+                        "integration": {
+                            "url": Config.MM_ACTIONS_URL,
+                            "context": {
+                                "action": ButtonActions.TODAY_ALL_MEETINGS,
+                                "user_id": user_id
+                            }
+                        }
+                    },
+                    {
+                        "name": "Текущие встречи",
+                        "integration": {
+                            "url": Config.MM_ACTIONS_URL,
+                            "context": {
+                                "action": ButtonActions.TODAY_CURRENT_MEETINGS,
+                                "user_id": user_id
+                            }
+                        }
+                    },
+                    {
+                        "name": "Создать встречу",
+                        "integration": {
+                            "url": Config.MM_ACTIONS_URL,
+                            "context": {
+                                "action": ButtonActions.CREATE_MEETING,
+                                "user_id": user_id
+                            }
+                        }
+                    },
+                    {
+                        "name": "Разлогиниться",
+                        "integration": {
+                            "url": Config.MM_ACTIONS_URL,
+                            "context": {
+                                "action": ButtonActions.LOGOUT,
+                                "user_id": user_id
+                            }
+                        },
+                        "style": "danger"
+                    }
+                ]
+            }]
+            
+            self.mm.create_post_with_attachments(channel_id, message, attachments)
+            
+            # Очистить состояние пользователя
+            self.logic.clear_user_state(user_id)
+        except Exception as e:
+            logger.error(f"Error showing main menu: {e}")
+    
+    async def handle_dialog_step(self, user_id: str, channel_id: str, 
+                                user_state, message: str):
+        """Обработать шаг диалога"""
+        current_state = user_state.state
+        state_data = json.loads(user_state.data) if user_state.data else {}
+        
+        if current_state == "awaiting_password":
+            await self.handle_auth_message(user_id, channel_id, message.strip())
+        
+        elif current_state == "creating_meeting_title":
+            state_data['title'] = message.strip()
+            await self.ask_meeting_date(user_id, channel_id, state_data)
+        
+        elif current_state == "creating_meeting_date":
+            date_obj = self.logic.validate_date(message.strip())
+            if date_obj:
+                state_data['date'] = date_obj.isoformat()
+                await self.ask_meeting_time(user_id, channel_id, state_data)
+            else:
+                self.mm.send_message(channel_id, 
+                    "❌ Некорректный формат даты. Попробуйте снова (DD.MM.YYYY)")
+        
+        elif current_state == "creating_meeting_time":
+            time_obj = self.logic.validate_time(message.strip())
+            if time_obj:
+                state_data['time'] = time_obj.isoformat()
+                await self.ask_meeting_duration(user_id, channel_id, state_data)
+            else:
+                self.mm.send_message(channel_id,
+                    "❌ Некорректный формат времени. Попробуйте снова (HH:MM)")
+        
+        elif current_state == "creating_meeting_duration":
+            minutes = self.logic.validate_minutes(message.strip())
+            if minutes:
+                state_data['duration'] = minutes
+                await self.ask_meeting_attendees(user_id, channel_id, state_data)
+            else:
+                self.mm.send_message(channel_id,
+                    "❌ Введите корректное количество минут (1-1440)")
+        
+        elif current_state == "creating_meeting_attendees":
+            attendees = self.logic.parse_attendees(message, self.mm)
+            state_data['attendees'] = attendees
+            await self.ask_meeting_description(user_id, channel_id, state_data)
+        
+        elif current_state == "creating_meeting_description":
+            state_data['description'] = message.strip()
+            await self.ask_meeting_location(user_id, channel_id, state_data)
+        
+        elif current_state == "creating_meeting_location":
+            state_data['location'] = message.strip()
+            await self.create_meeting(user_id, channel_id, state_data)
+    
+    async def ask_meeting_date(self, user_id: str, channel_id: str, state_data: Dict):
+        """Попросить дату встречи"""
+        today = datetime.now().strftime("%d.%m.%Y")
+        message = UIMessages.create_meeting_step_3(today)
+        self.mm.send_message(channel_id, message)
+        
+        self.logic.set_user_state(user_id, "creating_meeting_date", state_data)
+    
+    async def ask_meeting_time(self, user_id: str, channel_id: str, state_data: Dict):
+        """Попросить время начала встречи"""
+        message = UIMessages.create_meeting_step_5()
+        self.mm.send_message(channel_id, message)
+        
+        self.logic.set_user_state(user_id, "creating_meeting_time", state_data)
+    
+    async def ask_meeting_duration(self, user_id: str, channel_id: str, state_data: Dict):
+        """Попросить продолжительность встречи"""
+        message = UIMessages.create_meeting_step_7()
+        self.mm.send_message(channel_id, message)
+        
+        self.logic.set_user_state(user_id, "creating_meeting_duration", state_data)
+    
+    async def ask_meeting_attendees(self, user_id: str, channel_id: str, state_data: Dict):
+        """Попросить участников встречи"""
+        message = UIMessages.create_meeting_step_9()
+        self.mm.send_message(channel_id, message)
+        
+        self.logic.set_user_state(user_id, "creating_meeting_attendees", state_data)
+    
+    async def ask_meeting_description(self, user_id: str, channel_id: str, state_data: Dict):
+        """Попросить описание встречи"""
+        message = UIMessages.create_meeting_step_11()
+        
+        attachments = [{
+            "fallback": "Skip",
+            "actions": [{
+                "name": "Не добавлять",
+                "integration": {
+                    "url": Config.MM_ACTIONS_URL,
+                    "context": {
+                        "action": "skip_description",
+                        "user_id": user_id
+                    }
+                }
+            }]
+        }]
+        
+        self.mm.create_post_with_attachments(channel_id, message, attachments)
+        
+        self.logic.set_user_state(user_id, "creating_meeting_description", state_data)
+    
+    async def ask_meeting_location(self, user_id: str, channel_id: str, state_data: Dict):
+        """Попросить место встречи"""
+        message = UIMessages.create_meeting_step_13()
+        
+        attachments = [{
+            "fallback": "Skip",
+            "actions": [{
+                "name": "Не добавлять",
+                "integration": {
+                    "url": Config.MM_ACTIONS_URL,
+                    "context": {
+                        "action": "skip_location",
+                        "user_id": user_id
+                    }
+                }
+            }]
+        }]
+        
+        self.mm.create_post_with_attachments(channel_id, message, attachments)
+        
+        self.logic.set_user_state(user_id, "creating_meeting_location", state_data)
+    
+    async def create_meeting(self, user_id: str, channel_id: str, state_data: Dict):
+        """Создать встречу в календаре"""
+        try:
+            user = self.logic.get_user(user_id)
+            if not user:
+                self.mm.send_message(channel_id, "Ошибка: пользователь не авторизован")
+                return
+            
+            # TODO: Создать встречу в CalDAV
+            
+            title = state_data.get('title', '')
+            attendees = state_data.get('attendees', [])
+            description = state_data.get('description', '')
+            location = state_data.get('location', '')
+            
+            message = UIMessages.meeting_created(title, 
+                                                datetime.now(),
+                                                datetime.now(),
+                                                attendees,
+                                                description,
+                                                location)
+            
+            self.mm.send_message(channel_id, message)
+            
+            # Показать главное меню
+            await self.show_main_menu(user_id, channel_id)
+        except Exception as e:
+            logger.error(f"Error creating meeting: {e}")
+            self.mm.send_message(channel_id, "Ошибка при создании встречи")
+
+
+if __name__ == "__main__":
+    bot = Bot()
+    bot.start()
