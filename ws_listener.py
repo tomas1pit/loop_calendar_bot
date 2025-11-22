@@ -122,16 +122,23 @@ class MattermostWebSocketListener:
     def handle_posted(self, data: dict):
         """Обработать событие posted (новое сообщение)"""
         try:
-            broadcast = data.get('broadcast', {})
-            post = broadcast.get('post')
+            # post находится в data.post, а не в broadcast.post
+            post_data = data.get('data', {})
+            post_str = post_data.get('post')
             
-            # post может быть JSON строкой или объектом
-            if isinstance(post, str):
-                post = json.loads(post)
-            
-            if not post:
-                logger.warning("Posted event has no post data")
+            if not post_str:
+                logger.warning("Posted event has no post data in data.post")
                 return
+            
+            # post - это JSON строка, парсируем её
+            if isinstance(post_str, str):
+                try:
+                    post = json.loads(post_str)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse post JSON: {e}")
+                    return
+            else:
+                post = post_str
             
             message = post.get('message', '')
             user_id = post.get('user_id', '')
