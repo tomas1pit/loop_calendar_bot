@@ -173,8 +173,38 @@ class MattermostWebSocketListener:
                     logger.info("User is not authorized yet, sending auth prompt instead of menu")
                     self._send_auth_prompt(user_id)
                 else:
-                    # Пользователь авторизован — отправляем главное меню
-                    self._send_menu_reply(user_id, channel_id, post_id)
+                    # Пользователь авторизован — показываем единое главное меню через Bot.show_main_menu
+                    try:
+                        import asyncio
+                        loop = getattr(self.bot, "loop", None)
+                        if loop is None:
+                            logger.error("Bot loop is not set; cannot show main menu")
+                            return
+
+                        # Получаем/создаём личный канал как раньше
+                        base_url = Config.MATTERMOST_BASE_URL.rstrip('/')
+                        headers = {
+                            'Authorization': f'Bearer {Config.MATTERMOST_BOT_TOKEN}',
+                            'Content-Type': 'application/json'
+                        }
+                        channel_response = requests.post(
+                            f"{base_url}/api/v4/channels/direct",
+                            headers=headers,
+                            json=[self.bot.mm.user.get('id'), user_id] if getattr(self.bot, 'mm', None) and getattr(self.bot.mm, 'user', None) else [user_id],
+                            timeout=10,
+                            verify=False
+                        )
+                        if channel_response.status_code not in [200, 201]:
+                            logger.error(f"Failed to get direct channel for main menu: HTTP {channel_response.status_code}, response: {channel_response.text}")
+                            return
+                        dm_channel_id = channel_response.json().get('id')
+
+                        def _schedule_menu():
+                            asyncio.create_task(self.bot.show_main_menu(user_id, dm_channel_id))
+
+                        loop.call_soon_threadsafe(_schedule_menu)
+                    except Exception as e:
+                        logger.error(f"Failed to schedule main menu from WS: {e}", exc_info=True)
                 return
 
             # 2) Если бот НЕ упомянут, но у пользователя есть активное состояние диалога,
@@ -314,121 +344,4 @@ class MattermostWebSocketListener:
         except Exception as e:
             logger.error(f"Error in _send_auth_prompt: {e}", exc_info=True)
     
-    def _send_menu_reply(self, user_id: str, channel_id: str, root_id: str):
-        """Отправить главное меню в ответ на упоминание (в личный чат)"""
-        try:
-            logger.info(f"Sending menu to user {user_id}")
-            
-            # Используем синхронный HTTP запрос напрямую
-            base_url = Config.MATTERMOST_BASE_URL.rstrip('/')
-            headers = {
-                'Authorization': f'Bearer {Config.MATTERMOST_BOT_TOKEN}',
-                'Content-Type': 'application/json'
-            }
-            
-            # Получить прямой канал с пользователем: Mattermost ждёт [bot_id, user_id]
-            logger.info(f"Getting direct channel with user {user_id}...")
-            channel_response = requests.post(
-                f"{base_url}/api/v4/channels/direct",
-                headers=headers,
-                json=[self.bot.mm.user.get('id'), user_id] if getattr(self.bot, 'mm', None) and getattr(self.bot.mm, 'user', None) else [user_id],
-                timeout=10,
-                verify=False
-            )
-            
-            if channel_response.status_code not in [200, 201]:
-                logger.error(f"Failed to get direct channel: HTTP {channel_response.status_code}, response: {channel_response.text}")
-                return
-            
-            dm_channel = channel_response.json()
-            dm_channel_id = dm_channel.get('id')
-            logger.info(f"Direct channel ID: {dm_channel_id}")
-            
-            # Создать меню с кнопками (attachments)
-            menu_text = "**Главное меню**\n\nВыберите действие:"
-            
-            attachments = [
-                {
-                    "text": "Выберите действие:",
-                    "actions": [
-                        {
-                            "id": "show_today_all",
-                            "name": "📅 Все встречи на сегодня",
-                            "type": "button",
-                            "style": "primary",
-                            "integration": {
-                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
-                                "context": {
-                                    "action": "today_all_meetings",
-                                    "user_id": user_id
-                                }
-                            }
-                        },
-                        {
-                            "id": "show_today_current",
-                            "name": "⏱️ Текущие встречи",
-                            "type": "button",
-                            "integration": {
-                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
-                                "context": {
-                                    "action": "today_current_meetings",
-                                    "user_id": user_id
-                                }
-                            }
-                        },
-                        {
-                            "id": "create_meeting",
-                            "name": "➕ Создать встречу",
-                            "type": "button",
-                            "style": "primary",
-                            "integration": {
-                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
-                                "context": {
-                                    "action": "create_meeting",
-                                    "user_id": user_id
-                                }
-                            }
-                        },
-                        {
-                            "id": "logout",
-                            "name": "🚪 Разлогиниться",
-                            "type": "button",
-                            "style": "danger",
-                            "integration": {
-                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
-                                "context": {
-                                    "action": "logout",
-                                    "user_id": user_id
-                                }
-                            }
-                        }
-                    ]
-                }
-            ]
-            
-            post_data = {
-                'channel_id': dm_channel_id,
-                'message': menu_text,
-                'props': {
-                    'attachments': attachments
-                }
-            }
-            
-            logger.info("Sending menu with buttons...")
-            response = requests.post(
-                f"{base_url}/api/v4/posts",
-                headers=headers,
-                json=post_data,
-                timeout=10,
-                verify=False
-            )
-            
-            logger.info(f"Response status: {response.status_code}")
-            
-            if response.status_code == 201:
-                logger.info("Menu sent successfully to direct channel")
-            else:
-                logger.error(f"Failed to send menu: HTTP {response.status_code}, response: {response.text}")
-        
-        except Exception as e:
-            logger.error(f"Error in _send_menu_reply: {e}", exc_info=True)
+    # _send_menu_reply больше не используется; логика главного меню вынесена в Bot.show_main_menu
