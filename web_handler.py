@@ -78,7 +78,7 @@ class ActionHandler:
                 return
             
             # Получить встречи
-            meetings = self.bot.logic.get_today_meetings(
+            meetings = await self.bot.logic.get_today_meetings(
                 user_id,
                 user.email,
                 self.bot.logic.encryption.decrypt(user.encrypted_password),
@@ -136,7 +136,7 @@ class ActionHandler:
                 return
             
             # Получить встречи
-            meetings = self.bot.logic.get_current_meetings(
+            meetings = await self.bot.logic.get_current_meetings(
                 user_id,
                 user.email,
                 self.bot.logic.encryption.decrypt(user.encrypted_password),
@@ -275,7 +275,7 @@ class ActionHandler:
                 return
 
             # Берём все встречи на сегодня и ищем нужную по uid
-            meetings = self.bot.logic.get_today_meetings(
+            meetings = await self.bot.logic.get_today_meetings(
                 user_id,
                 user.email,
                 self.bot.logic.encryption.decrypt(user.encrypted_password),

@@ -98,31 +98,25 @@ class BotLogic:
         finally:
             session.close()
     
-    def get_today_meetings(self, mattermost_id: str, user_email: str, 
-                          password: str) -> List[Dict]:
-        """Получить все встречи на сегодня"""
+    async def get_today_meetings(self, mattermost_id: str, user_email: str, 
+                                 password: str) -> List[Dict]:
+        """Получить все встречи на сегодня (async)"""
         tz_now = datetime.now(self.tz)
         start = tz_now.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
 
         caldav = CalDAVManager(user_email, password)
+        events: List[Dict] = []
         try:
-            # В текущей версии CalDAVManager.get_events возвращает пустой список,
-            # но контракт уже совместим: список словарей с ISO-датами.
-            # Когда в CalDAVManager появится реальная реализация, эта обвязка
-            # начнёт работать без изменений.
-            events = asyncio.get_event_loop().run_until_complete(
-                caldav.get_events(start, end)
-            )
+            events = await caldav.get_events(start, end)
+        except Exception:
+            events = []
         finally:
             try:
-                asyncio.get_event_loop().run_until_complete(caldav.close())
-            except RuntimeError:
-                # Если нет активного цикла (например, вызов из отдельного треда),
-                # просто пропускаем закрытие — сессия будет собрана GC.
+                await caldav.close()
+            except Exception:
                 pass
 
-        # Нормализуем формат для UI/уведомлений
         normalized: List[Dict] = []
         for ev in events:
             try:
@@ -131,11 +125,8 @@ class BotLogic:
                 end_iso = ev.get("end_time") or ""
                 start_dt = datetime.fromisoformat(start_iso) if start_iso else tz_now
                 end_dt = datetime.fromisoformat(end_iso) if end_iso else start_dt
-
-                # Время в человекочитаемом виде для таблицы
                 time_str = f"{start_dt.strftime('%d.%m %H:%M')}–{end_dt.strftime('%H:%M')}"
                 status = ev.get("status") or "CONFIRMED"
-
                 normalized.append({
                     "uid": ev.get("uid", ""),
                     "title": title,
@@ -150,15 +141,13 @@ class BotLogic:
                 })
             except Exception:
                 continue
-
         return normalized
     
-    def get_current_meetings(self, mattermost_id: str, user_email: str,
-                            password: str) -> List[Dict]:
-        """Получить текущие и будущие встречи на сегодня"""
-        all_today = self.get_today_meetings(mattermost_id, user_email, password)
+    async def get_current_meetings(self, mattermost_id: str, user_email: str,
+                                   password: str) -> List[Dict]:
+        """Получить текущие и будущие встречи на сегодня (async)"""
+        all_today = await self.get_today_meetings(mattermost_id, user_email, password)
         now = datetime.now(self.tz)
-
         result: List[Dict] = []
         for m in all_today:
             try:
