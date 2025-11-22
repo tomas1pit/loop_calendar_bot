@@ -242,11 +242,11 @@ class MattermostWebSocketListener:
                     "2) Отправьте мне этот пароль одним сообщением."
                 )
 
-            # Создаем/получаем личный канал
+            # Создаем/получаем личный канал: Mattermost ждёт [bot_id, user_id]
             channel_resp = requests.post(
                 f"{base_url}/api/v4/channels/direct",
                 headers=headers,
-                json=[user_id],
+                json=[self.bot.mm.user.get('id'), user_id] if getattr(self.bot, 'mm', None) and getattr(self.bot.mm, 'user', None) else [user_id],
                 timeout=10,
                 verify=False
             )
@@ -296,12 +296,12 @@ class MattermostWebSocketListener:
                 'Content-Type': 'application/json'
             }
             
-            # Получить прямой канал с пользователем
+            # Получить прямой канал с пользователем: Mattermost ждёт [bot_id, user_id]
             logger.info(f"Getting direct channel with user {user_id}...")
             channel_response = requests.post(
                 f"{base_url}/api/v4/channels/direct",
                 headers=headers,
-                json=[user_id],
+                json=[self.bot.mm.user.get('id'), user_id] if getattr(self.bot, 'mm', None) and getattr(self.bot.mm, 'user', None) else [user_id],
                 timeout=10,
                 verify=False
             )
