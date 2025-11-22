@@ -31,6 +31,8 @@ class Bot:
         self.ws_listener = MattermostWebSocketListener(self)
         self.running = False
         self.web_runner = None
+        # Основной event loop будет сохранён при старте
+        self.loop = None
     
     def start(self):
         """Запустить бота"""
@@ -75,6 +77,8 @@ class Bot:
     
     async def run_main_loop(self):
         """Основной цикл бота"""
+        # Сохранить текущий event loop, чтобы использовать его из других потоков
+        self.loop = asyncio.get_running_loop()
         # Подключиться к Mattermost
         if not await self.mm.connect():
             logger.error("Failed to connect to Mattermost")

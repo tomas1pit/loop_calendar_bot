@@ -189,13 +189,18 @@ class MattermostWebSocketListener:
                 logger.info(f"User {user_id} has active state '{user_state.state}', passing message to dialog handler")
                 try:
                     import asyncio
-                    # Всегда отправляем задачу в уже существующий event loop
-                    loop = asyncio.get_event_loop()
-                    loop.call_soon_threadsafe(
-                        lambda: asyncio.create_task(
+                    # Используем главный event loop, сохранённый в боте
+                    loop = getattr(self.bot, "loop", None)
+                    if loop is None:
+                        logger.error("Bot loop is not set; cannot schedule dialog handler")
+                        return
+
+                    def _schedule_dialog_step():
+                        asyncio.create_task(
                             self.bot.handle_dialog_step(user_id, channel_id, user_state, message)
                         )
-                    )
+
+                    loop.call_soon_threadsafe(_schedule_dialog_step)
                 except Exception as e:
                     logger.error(f"Failed to schedule dialog handler task: {e}", exc_info=True)
                 return
