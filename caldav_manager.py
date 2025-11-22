@@ -458,6 +458,7 @@ class CalDAVManager:
             root = ET.fromstring(xml_text)
             ns = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav", "C": "urn:ietf:params:xml:ns:caldav"}
             block_index = 0
+            ical_blocks: List[str] = []
             for resp in root.findall("d:response", ns):
                 for propstat in resp.findall("d:propstat", ns):
                     prop = propstat.find("d:prop", ns)
@@ -482,6 +483,7 @@ class CalDAVManager:
                     except Exception:
                         pass
                     cleaned = ''.join(ch for ch in raw_ical if ch in ('\n','\r') or ord(ch) >= 32)
+                    ical_blocks.append(cleaned)
                     parse_source = cleaned
                     parsed = False
                     try:
@@ -570,6 +572,80 @@ class CalDAVManager:
                 logger.info(f"Parsed {len(events)} CalDAV events from REPORT response")
             else:
                 logger.info("Parsed 0 CalDAV events from REPORT response")
+                # Regex fallback: если стандартный парсер ничего не дал, пытаемся извлечь VEVENT вручную
+                try:
+                    import re
+                    tz_local = pytz.timezone(Config.TZ)
+                    fallback_events = []
+                    for ib_idx, block in enumerate(ical_blocks):
+                        for match in re.finditer(r"BEGIN:VEVENT(.*?)END:VEVENT", block, re.DOTALL):
+                            vevent_raw = match.group(1)
+                            # Извлекаем ключевые поля простыми regex
+                            def rex(field):
+                                m = re.search(rf"^{field}:(.+)$", vevent_raw, re.MULTILINE)
+                                return m.group(1).strip() if m else ""
+                            def rex_tz(field):
+                                # DTSTART;TZID=Europe/Moscow:20251122T011500
+                                m = re.search(rf"^{field}(?:;TZID=([^:]+))?:(.+)$", vevent_raw, re.MULTILINE)
+                                if m:
+                                    return m.group(1) or "", m.group(2).strip()
+                                return "", ""
+                            uid = rex("UID") or f"fallback-{ib_idx}-{len(fallback_events)}"
+                            summary = rex("SUMMARY") or "Без названия"
+                            status = rex("STATUS") or "CONFIRMED"
+                            tzid_start, dtstart_raw = rex_tz("DTSTART")
+                            tzid_end, dtend_raw = rex_tz("DTEND")
+                            dtstart = None
+                            dtend = None
+                            dt_fmt_candidates = ["%Y%m%dT%H%M%S", "%Y%m%dT%H%M"]
+                            for fmt in dt_fmt_candidates:
+                                if dtstart is None and dtstart_raw:
+                                    try:
+                                        dtstart = datetime.strptime(dtstart_raw, fmt)
+                                    except Exception:
+                                        pass
+                                if dtend is None and dtend_raw:
+                                    try:
+                                        dtend = datetime.strptime(dtend_raw, fmt)
+                                    except Exception:
+                                        pass
+                            if dtstart is not None:
+                                if tzid_start:
+                                    try:
+                                        tz_parsed = pytz.timezone(tzid_start)
+                                    except Exception:
+                                        tz_parsed = tz_local
+                                else:
+                                    tz_parsed = tz_local
+                                dtstart = tz_parsed.localize(dtstart)
+                            if dtend is not None:
+                                if tzid_end:
+                                    try:
+                                        tz_parsed_e = pytz.timezone(tzid_end)
+                                    except Exception:
+                                        tz_parsed_e = tz_local
+                                else:
+                                    tz_parsed_e = tz_local
+                                dtend = tz_parsed_e.localize(dtend)
+                            if dtstart and dtend:
+                                fallback_events.append({
+                                    "uid": uid,
+                                    "title": summary,
+                                    "start_time": dtstart.isoformat(),
+                                    "end_time": dtend.isoformat(),
+                                    "attendees": [],
+                                    "description": "",
+                                    "location": "",
+                                    "organizer": "",
+                                    "status": status,
+                                })
+                    if fallback_events:
+                        events.extend(fallback_events)
+                        logger.info(f"Regex fallback extracted {len(fallback_events)} VEVENT(s)")
+                    else:
+                        logger.info("Regex fallback found 0 VEVENT blocks")
+                except Exception as rex_e:
+                    logger.debug(f"Regex fallback failed: {rex_e}")
         except Exception as e:
             logger.error(f"Error parsing CalDAV events XML: {e}")
         return events
