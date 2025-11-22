@@ -9,6 +9,7 @@ from mattermost_manager import MattermostManager
 from bot_logic import BotLogic
 from ui_messages import UIMessages, ButtonActions
 from notification_manager import NotificationManager
+from ws_listener import MattermostWebSocketListener
 from web_handler import start_web_server
 import re
 
@@ -27,6 +28,7 @@ class Bot:
                                     Config.BOT_NAME)
         self.logic = BotLogic(self.db, self.mm)
         self.notification_manager = NotificationManager(self.db, self.mm)
+        self.ws_listener = MattermostWebSocketListener(self)
         self.running = False
         self.web_runner = None
     
@@ -61,6 +63,9 @@ class Bot:
     
     async def _cleanup(self):
         """Очистка ресурсов"""
+        # Остановить WebSocket
+        self.ws_listener.running = False
+        
         # Остановить Mattermost сессию
         await self.mm.disconnect()
         
@@ -76,6 +81,10 @@ class Bot:
             return False
         
         logger.info("Bot connected successfully")
+        
+        # Запустить WebSocket слушатель (синхронный в отдельном потоке)
+        self.ws_listener.connect()
+        logger.info("WebSocket listener started")
         
         # Запустить веб-сервер для обработки действий (вебхуки и интерактивные кнопки)
         self.web_runner = await start_web_server(self, "0.0.0.0", 8080)

@@ -1,7 +1,8 @@
-import asyncio
+import threading
 import json
 import logging
-from websockets import connect, exceptions
+import time
+from websocket import create_connection, WebSocketConnectionClosedException
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -12,13 +13,18 @@ class MattermostWebSocketListener:
         self.bot = bot
         self.ws = None
         self.running = False
+        self.thread = None
         self.reconnect_delay = 5
-        self.heartbeat_interval = 30
+        self.seq = 1
     
-    async def connect(self):
-        """Подключиться к WebSocket Mattermost с автоматическим переподключением"""
+    def connect(self):
+        """Подключиться к WebSocket Mattermost (синхронно в отдельном потоке)"""
+        self.thread = threading.Thread(target=self._connect_loop, daemon=True)
+        self.thread.start()
+    
+    def _connect_loop(self):
+        """Основной цикл подключения с переподключением"""
         self.running = True
-        message_id = 1
         
         while self.running:
             try:
@@ -28,88 +34,53 @@ class MattermostWebSocketListener:
                 
                 logger.info(f"Connecting to WebSocket: {ws_url}")
                 
-                self.ws = await connect(ws_url, ping_interval=None, pong_timeout=None)
+                self.ws = create_connection(ws_url)
                 
                 # Отправить токен аутентификации
                 auth_msg = {
-                    "seq": message_id,
+                    "seq": self.seq,
                     "action": "authentication_challenge",
                     "data": {
                         "token": Config.MATTERMOST_BOT_TOKEN
                     }
                 }
-                message_id += 1
-                await self.ws.send(json.dumps(auth_msg))
-                logger.debug(f"Sent auth message")
+                self.seq += 1
+                
+                self.ws.send(json.dumps(auth_msg))
+                logger.debug("Sent auth message")
                 
                 # Получить ответ на аутентификацию
-                response = await asyncio.wait_for(self.ws.recv(), timeout=5)
-                auth_response = json.loads(response)
-                logger.info(f"Auth response: {auth_response.get('status', 'unknown')}")
-                
-                if auth_response.get('status') == 'OK':
-                    logger.info("WebSocket authenticated successfully")
-                else:
-                    logger.error(f"Authentication failed: {auth_response}")
-                    await asyncio.sleep(self.reconnect_delay)
-                    continue
-                
-                # Запустить задачи слушания и heartbeat
-                listen_task = asyncio.create_task(self.listen(message_id))
-                heartbeat_task = asyncio.create_task(self.send_heartbeat(message_id))
-                
-                # Ждём, пока одна из них не завершится
-                await asyncio.gather(listen_task, heartbeat_task)
+                response = self.ws.recv()
+                if response:
+                    auth_response = json.loads(response)
+                    logger.info(f"Auth response: {auth_response.get('status', 'unknown')}")
+                    
+                    if auth_response.get('status') == 'OK':
+                        logger.info("WebSocket authenticated successfully")
+                        # Запустить цикл слушания
+                        self._listen()
+                    else:
+                        logger.error(f"Authentication failed: {auth_response}")
+                        time.sleep(self.reconnect_delay)
             
-            except exceptions.ConnectionClosed as e:
-                logger.warning(f"WebSocket connection closed: {e}. Reconnecting in {self.reconnect_delay} seconds...")
+            except WebSocketConnectionClosedException:
+                logger.warning(f"WebSocket connection closed. Reconnecting in {self.reconnect_delay} seconds...")
                 if self.running:
-                    await asyncio.sleep(self.reconnect_delay)
-            
-            except asyncio.TimeoutError:
-                logger.error("Authentication timeout")
-                if self.running:
-                    await asyncio.sleep(self.reconnect_delay)
-            
-            except asyncio.CancelledError:
-                logger.info("WebSocket connection cancelled")
-                self.running = False
-                break
+                    time.sleep(self.reconnect_delay)
             
             except Exception as e:
                 logger.error(f"Error in WebSocket connection: {e}")
                 if self.running:
-                    await asyncio.sleep(self.reconnect_delay)
+                    time.sleep(self.reconnect_delay)
     
-    async def send_heartbeat(self, initial_message_id):
-        """Отправлять периодические heartbeat сообщения для поддержки соединения"""
-        message_id = initial_message_id
-        
-        while self.running and self.ws:
-            try:
-                await asyncio.sleep(self.heartbeat_interval)
-                if self.running and self.ws:
-                    # Отправить user_typing как heartbeat для поддержки соединения
-                    heartbeat_msg = {
-                        "seq": message_id,
-                        "action": "user_typing",
-                        "data": {}
-                    }
-                    message_id += 1
-                    await self.ws.send(json.dumps(heartbeat_msg))
-                    logger.debug("Heartbeat sent")
-            except Exception as e:
-                logger.debug(f"Error sending heartbeat: {e}")
-                break
-    
-    async def listen(self, initial_message_id):
-        """Слушать события от WebSocket"""
-        message_id = initial_message_id
-        
+    def _listen(self):
+        """Слушать события от WebSocket (синхронно)"""
         try:
             while self.running and self.ws:
                 try:
-                    message = await self.ws.recv()
+                    # Получить сообщение с timeout
+                    self.ws.settimeout(10)
+                    message = self.ws.recv()
                     
                     if not message:
                         continue
@@ -123,13 +94,9 @@ class MattermostWebSocketListener:
                     event_type = data.get('event')
                     
                     if event_type == "posted":
-                        await self.handle_posted(data)
+                        self.handle_posted(data)
                     elif event_type == "status_change":
-                        await self.handle_status_change(data)
-                
-                except exceptions.ConnectionClosed:
-                    logger.info("WebSocket connection closed by server")
-                    break
+                        self.handle_status_change(data)
                 
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
@@ -139,6 +106,11 @@ class MattermostWebSocketListener:
             logger.error(f"Error in WebSocket listen: {e}")
         
         finally:
+            if self.ws:
+                try:
+                    self.ws.close()
+                except:
+                    pass
             self.ws = None
     
     async def listen(self):
