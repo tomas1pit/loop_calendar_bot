@@ -80,11 +80,18 @@ class MattermostWebSocketListener:
                     elif event_type == "status_change":
                         await self.handle_status_change(data)
                 
+                except exceptions.ConnectionClosed:
+                    logger.info("WebSocket connection closed by server")
+                    break
+                
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
+                    break
         
         except Exception as e:
             logger.error(f"Error in WebSocket listen: {e}")
+        
+        finally:
             self.ws = None
     
     async def handle_posted(self, data: dict):
