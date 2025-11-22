@@ -192,6 +192,7 @@ class CalDAVManager:
                 "Content-Type": "application/xml; charset=utf-8",
             }
 
+            # Основной запрос (точный диапазон)
             for cal in calendars:
                 cal_href = cal.get("href")
                 if not cal_href:
@@ -215,7 +216,7 @@ class CalDAVManager:
                 except Exception as ce:
                     logger.debug(f"Error fetching events from {cal_href}: {ce}")
 
-            # Если за указанный день ничего не нашли, делаем расширенный диапазон (7 дней вперёд) как fallback
+            # Fallback расширенный диапазон REPORT если ничего не нашли
             if not all_events:
                 ext_start = start_date
                 ext_end = start_date + timedelta(days=7)
@@ -241,23 +242,20 @@ class CalDAVManager:
                         all_events.extend(evs)
                     except Exception:
                         continue
-
-            return all_events
         except Exception as e:
             logger.error(f"Error getting events: {e}")
-            return all_events
         finally:
-            # Диагностика итогового списка событий (первые 10)
+            # Диагностика первичного результата до python-caldav
             try:
                 if all_events:
                     for i, ev in enumerate(all_events[:10]):
                         logger.info(f"ALL_EVENTS[{i}] uid={ev.get('uid')} title={ev.get('title')} start={ev.get('start_time')} end={ev.get('end_time')}")
                 else:
-                    logger.info("ALL_EVENTS empty after get_events aggregation")
+                    logger.info("ALL_EVENTS empty after REPORT aggregation (will try python-caldav fallback)")
             except Exception:
                 pass
 
-        # Если ничего не нашли через REPORT парсинг — пробуем fallback через библиотеку caldav
+        # Python-caldav fallback (date_search) теперь достижим
         if not all_events:
             try:
                 import caldav
@@ -267,34 +265,32 @@ class CalDAVManager:
                     client=caldav.DAVClient(url=base_url, username=self.email, password=self.password),
                     url=self.principal_url,
                 )
-                calendars = principal.calendars()
-                if not calendars:
+                calendars2 = principal.calendars()
+                if not calendars2:
                     logger.info("Fallback caldav: no calendars returned by principal")
                     return []
                 preferred_names = {"main", "основной"}
                 selected = None
-                for c in calendars:
+                for c in calendars2:
                     name = getattr(c, 'name', '') or ''
                     if name.lower() in preferred_names:
                         selected = c
                         break
                 if selected is None:
-                    selected = calendars[0]
-                # date_search требует aware дат с tzinfo
+                    selected = calendars2[0]
                 tz_local = pytz.timezone(Config.TZ)
-                s_local = (start_date or datetime.now()).replace(tzinfo=tz_local)
-                e_local = (end_date or (start_date or datetime.now()) + timedelta(days=1)).replace(tzinfo=tz_local)
+                s_local = (start_date or datetime.now()).astimezone(tz_local) if (start_date and start_date.tzinfo) else (start_date or datetime.now()).replace(tzinfo=tz_local)
+                e_local = (end_date or (start_date or datetime.now()) + timedelta(days=1))
+                e_local = e_local.astimezone(tz_local) if (e_local and e_local.tzinfo) else e_local.replace(tzinfo=tz_local)
                 raw_events = selected.date_search(s_local, e_local)
                 logger.info(f"Fallback caldav: date_search returned {len(raw_events)} items")
                 for ev_obj in raw_events:
                     try:
-                        # Получить сырые данные ICS
                         ics_data = getattr(ev_obj, 'data', None)
                         if ics_data is None:
                             ics_data = ev_obj._data if hasattr(ev_obj, '_data') else None
                         if not ics_data:
                             continue
-                        # Парсим ics через icalendar
                         try:
                             cal = Calendar.from_ical(ics_data)
                         except Exception as pe:
@@ -310,15 +306,9 @@ class CalDAVManager:
                                 dtend = comp.get('dtend').dt if comp.get('dtend') else None
                                 tz_cfg = pytz.timezone(Config.TZ)
                                 if isinstance(dtstart, datetime):
-                                    if dtstart.tzinfo is None:
-                                        dtstart = tz_cfg.localize(dtstart)
-                                    else:
-                                        dtstart = dtstart.astimezone(tz_cfg)
+                                    dtstart = dtstart.astimezone(tz_cfg) if dtstart.tzinfo else tz_cfg.localize(dtstart)
                                 if isinstance(dtend, datetime):
-                                    if dtend.tzinfo is None:
-                                        dtend = tz_cfg.localize(dtend)
-                                    else:
-                                        dtend = dtend.astimezone(tz_cfg)
+                                    dtend = dtend.astimezone(tz_cfg) if dtend.tzinfo else tz_cfg.localize(dtend)
                                 attendees: List[str] = []
                                 for att in comp.get_all('attendee', []):
                                     a = str(att)
@@ -349,10 +339,8 @@ class CalDAVManager:
                         logger.debug(f"Fallback caldav: error processing event object {ce_ev}")
                 if all_events:
                     logger.info(f"Fallback caldav: aggregated {len(all_events)} events")
-                return all_events
             except Exception as e_fb:
                 logger.info(f"Fallback caldav failed: {e_fb}")
-                return all_events
         return all_events
     
     async def create_event(self, title: str, start: datetime, end: datetime, 
