@@ -58,13 +58,31 @@ class CalDAVManager:
             return False
     
     async def get_calendars(self) -> List[Dict[str, str]]:
-        """Получить список календарей"""
+        """Получить список календарей (пытаемся несколько вариантов путей)"""
+        candidates = [
+            f"{self.principal_url}calendar/",
+            f"{self.base_url}/dav/{self.email}/calendar/",
+            f"{self.base_url}/dav/{self.email}/",
+            f"{self.base_url}/calendars/{self.email}/",
+        ]
+        found: List[Dict[str, str]] = []
         try:
-            # Упрощенная реализация - возвращаем основной календарь
-            return [{
-                "href": f"{self.principal_url}calendar/",
-                "name": "Personal Calendar",
-            }]
+            session = await self._get_session()
+            headers = {"Depth": "0"}
+            for href in candidates:
+                try:
+                    async with session.request("PROPFIND", href, headers=headers) as resp:
+                        if resp.status in (200, 207):
+                            found.append({"href": href, "name": "Calendar"})
+                            logger.info(f"CalDAV calendar path detected: {href}")
+                            break
+                        else:
+                            logger.debug(f"CalDAV calendar path probe failed: {href} -> {resp.status}")
+                except Exception as e:
+                    logger.debug(f"CalDAV calendar path probe error {href}: {e}")
+            if not found:
+                logger.error("No CalDAV calendar path found among candidates")
+            return found
         except Exception as e:
             logger.error(f"Error getting calendars: {e}")
             return []
@@ -93,7 +111,7 @@ class CalDAVManager:
 
             async with session.request("REPORT", cal_href, data=body, headers=headers) as resp:
                 if resp.status not in (200, 207):
-                    logger.error(f"CalDAV REPORT failed: {resp.status}")
+                    logger.error(f"CalDAV REPORT failed: {resp.status} for {cal_href}")
                     return []
                 text = await resp.text()
 
@@ -162,8 +180,12 @@ class CalDAVManager:
     
     def _build_calendar_query(self, start: datetime, end: datetime) -> str:
         """Построить CalDAV REPORT запрос"""
-        start_str = start.strftime("%Y%m%dT%H%M%SZ")
-        end_str = end.strftime("%Y%m%dT%H%M%SZ")
+        # Преобразуем в UTC перед добавлением 'Z'
+        import pytz
+        start_utc = start.astimezone(pytz.UTC) if start.tzinfo else start
+        end_utc = end.astimezone(pytz.UTC) if end.tzinfo else end
+        start_str = start_utc.strftime("%Y%m%dT%H%M%SZ")
+        end_str = end_utc.strftime("%Y%m%dT%H%M%SZ")
         
         return f"""<?xml version="1.0" encoding="utf-8" ?>
 <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
