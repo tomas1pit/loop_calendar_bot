@@ -2,6 +2,7 @@ import threading
 import json
 import logging
 import time
+import asyncio
 from websocket import create_connection, WebSocketConnectionClosedException
 from config import Config
 
@@ -159,6 +160,8 @@ class MattermostWebSocketListener:
             
             if f"@{bot_name}" in message_lower or bot_name in message_lower:
                 logger.info(f"✓ Bot @{bot_name} mentioned in message!")
+                # Отправить меню в ответ
+                self._send_menu_reply(user_id, channel_id, post_id)
             else:
                 logger.info(f"✗ Bot @{bot_name} NOT mentioned (message: {message[:100]})")
         
@@ -185,3 +188,38 @@ class MattermostWebSocketListener:
             except:
                 pass
         logger.info("WebSocket disconnected")
+    
+    def _send_menu_reply(self, user_id: str, channel_id: str, root_id: str):
+        """Отправить главное меню в ответ на упоминание"""
+        try:
+            logger.info(f"Sending menu reply to user {user_id} in channel {channel_id}")
+            
+            # Простое меню в виде текста
+            menu_text = """**Календарь Бот Главное Меню**
+
+Выберите действие:
+1️⃣ Показать встречи на сегодня
+2️⃣ Создать встречу
+3️⃣ Настройки"""
+            
+            # Используем HTTP API для отправки сообщения
+            # Вызываем метод бота через asyncio
+            if self.bot:
+                logger.info("Calling bot.mm.send_message...")
+                # Запускаем асинхронный вызов в отдельном потоке
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(
+                        self.bot.mm.send_message(channel_id, menu_text, root_id=root_id)
+                    )
+                    logger.info("Menu sent successfully")
+                except Exception as e:
+                    logger.error(f"Failed to send menu: {e}", exc_info=True)
+                finally:
+                    loop.close()
+            else:
+                logger.warning("Bot reference is None, cannot send menu")
+        
+        except Exception as e:
+            logger.error(f"Error in _send_menu_reply: {e}", exc_info=True)
