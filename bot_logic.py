@@ -124,14 +124,14 @@ class BotLogic:
         
         return table
     
-    def parse_attendees(self, text: str, mm_manager: MattermostManager) -> List[str]:
+    async def parse_attendees(self, text: str) -> List[str]:
         """Парсить список участников (@username и emails)"""
         attendees = []
         
         # Найти все @username
         usernames = re.findall(r'@(\w+)', text)
         for username in usernames:
-            user = mm_manager.get_user_by_username(username)
+            user = await self.mm.get_user_by_username(username)
             if user and user.get('email'):
                 attendees.append(user['email'])
         

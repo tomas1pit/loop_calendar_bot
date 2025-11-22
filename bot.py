@@ -36,11 +36,6 @@ class Bot:
         """Запустить бота"""
         logger.info("Starting calendar bot...")
         
-        if not self.mm.connect():
-            logger.error("Failed to connect to Mattermost")
-            return False
-        
-        logger.info("Bot connected successfully")
         self.running = True
         
         # Запустить основной цикл
@@ -58,18 +53,35 @@ class Bot:
         logger.info("Stopping bot...")
         self.running = False
         
+        # Остановить все async операции
+        if self.running:
+            asyncio.run(self._cleanup())
+        else:
+            asyncio.run(self._cleanup())
+        
+        self.db.close()
+    
+    async def _cleanup(self):
+        """Очистка ресурсов"""
         # Остановить WebSocket
-        asyncio.run(self.ws_listener.disconnect())
+        await self.ws_listener.disconnect()
+        
+        # Остановить Mattermost сессию
+        await self.mm.disconnect()
         
         # Остановить веб-сервер
         if self.web_runner:
-            asyncio.run(self.web_runner.cleanup())
-        
-        self.mm.disconnect()
-        self.db.close()
+            await self.web_runner.cleanup()
     
     async def run_main_loop(self):
         """Основной цикл бота"""
+        # Подключиться к Mattermost
+        if not await self.mm.connect():
+            logger.error("Failed to connect to Mattermost")
+            return False
+        
+        logger.info("Bot connected successfully")
+        
         # Запустить веб-сервер для обработки действий
         self.web_runner = await start_web_server(self, "0.0.0.0", 8080)
         
@@ -163,14 +175,14 @@ class Bot:
             email = mm_user.get('email', '')
             
             message = UIMessages.auth_required(email)
-            self.mm.send_message(channel_id, message)
+            await self.mm.send_message(channel_id, message)
             
             # Установить состояние ожидания пароля
             self.logic.set_user_state(user_id, "awaiting_password", 
                                      {"email": email})
         except Exception as e:
             logger.error(f"Error showing auth prompt: {e}")
-            self.mm.send_message(channel_id, "Произошла ошибка. Пожалуйста, попробуйте позже.")
+            await self.mm.send_message(channel_id, "Произошла ошибка. Пожалуйста, попробуйте позже.")
     
     async def show_main_menu(self, user_id: str, channel_id: str):
         """Показать главное меню"""
@@ -226,7 +238,7 @@ class Bot:
                 ]
             }]
             
-            self.mm.create_post_with_attachments(channel_id, message, attachments)
+            await self.mm.create_post_with_attachments(channel_id, message, attachments)
             
             # Очистить состояние пользователя
             self.logic.clear_user_state(user_id)
@@ -252,7 +264,7 @@ class Bot:
                 state_data['date'] = date_obj.isoformat()
                 await self.ask_meeting_time(user_id, channel_id, state_data)
             else:
-                self.mm.send_message(channel_id, 
+                await self.mm.send_message(channel_id, 
                     "❌ Некорректный формат даты. Попробуйте снова (DD.MM.YYYY)")
         
         elif current_state == "creating_meeting_time":
@@ -261,7 +273,7 @@ class Bot:
                 state_data['time'] = time_obj.isoformat()
                 await self.ask_meeting_duration(user_id, channel_id, state_data)
             else:
-                self.mm.send_message(channel_id,
+                await self.mm.send_message(channel_id,
                     "❌ Некорректный формат времени. Попробуйте снова (HH:MM)")
         
         elif current_state == "creating_meeting_duration":
@@ -270,11 +282,11 @@ class Bot:
                 state_data['duration'] = minutes
                 await self.ask_meeting_attendees(user_id, channel_id, state_data)
             else:
-                self.mm.send_message(channel_id,
+                await self.mm.send_message(channel_id,
                     "❌ Введите корректное количество минут (1-1440)")
         
         elif current_state == "creating_meeting_attendees":
-            attendees = self.logic.parse_attendees(message, self.mm)
+            attendees = await self.logic.parse_attendees(message)
             state_data['attendees'] = attendees
             await self.ask_meeting_description(user_id, channel_id, state_data)
         
@@ -290,28 +302,28 @@ class Bot:
         """Попросить дату встречи"""
         today = datetime.now().strftime("%d.%m.%Y")
         message = UIMessages.create_meeting_step_3(today)
-        self.mm.send_message(channel_id, message)
+        await self.mm.send_message(channel_id, message)
         
         self.logic.set_user_state(user_id, "creating_meeting_date", state_data)
     
     async def ask_meeting_time(self, user_id: str, channel_id: str, state_data: Dict):
         """Попросить время начала встречи"""
         message = UIMessages.create_meeting_step_5()
-        self.mm.send_message(channel_id, message)
+        await self.mm.send_message(channel_id, message)
         
         self.logic.set_user_state(user_id, "creating_meeting_time", state_data)
     
     async def ask_meeting_duration(self, user_id: str, channel_id: str, state_data: Dict):
         """Попросить продолжительность встречи"""
         message = UIMessages.create_meeting_step_7()
-        self.mm.send_message(channel_id, message)
+        await self.mm.send_message(channel_id, message)
         
         self.logic.set_user_state(user_id, "creating_meeting_duration", state_data)
     
     async def ask_meeting_attendees(self, user_id: str, channel_id: str, state_data: Dict):
         """Попросить участников встречи"""
         message = UIMessages.create_meeting_step_9()
-        self.mm.send_message(channel_id, message)
+        await self.mm.send_message(channel_id, message)
         
         self.logic.set_user_state(user_id, "creating_meeting_attendees", state_data)
     
@@ -364,7 +376,7 @@ class Bot:
         try:
             user = self.logic.get_user(user_id)
             if not user:
-                self.mm.send_message(channel_id, "Ошибка: пользователь не авторизован")
+                await self.mm.send_message(channel_id, "Ошибка: пользователь не авторизован")
                 return
             
             # TODO: Создать встречу в CalDAV
@@ -381,13 +393,13 @@ class Bot:
                                                 description,
                                                 location)
             
-            self.mm.send_message(channel_id, message)
+            await self.mm.send_message(channel_id, message)
             
             # Показать главное меню
             await self.show_main_menu(user_id, channel_id)
         except Exception as e:
             logger.error(f"Error creating meeting: {e}")
-            self.mm.send_message(channel_id, "Ошибка при создании встречи")
+            await self.mm.send_message(channel_id, "Ошибка при создании встречи")
 
 
 if __name__ == "__main__":

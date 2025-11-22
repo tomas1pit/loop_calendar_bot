@@ -193,7 +193,7 @@ class NotificationManager:
                         start_time,
                         event.get('location', '')
                     )
-                    self.mm.send_message(channel_id, message)
+                    await self.mm.send_message(channel_id, message)
                     reminder_count += 1
         
         except Exception as e:
@@ -204,7 +204,7 @@ class NotificationManager:
     async def _notify_new_meeting(self, user, event: Dict):
         """Отправить уведомление о новой встрече"""
         try:
-            channel_id = self.mm.get_channel_id(user.mattermost_id)
+            channel_id = await self.mm.get_channel_id(user.mattermost_id)
             if not channel_id:
                 return
             
@@ -217,7 +217,7 @@ class NotificationManager:
                 event.get('location', '')
             )
             
-            self.mm.send_message(channel_id, message)
+            await self.mm.send_message(channel_id, message)
             logger.info(f"Sent new meeting notification to {user.mattermost_id}")
         
         except Exception as e:
@@ -226,7 +226,7 @@ class NotificationManager:
     async def _notify_cancelled_meeting(self, user, cached: MeetingCache):
         """Отправить уведомление об отмене встречи"""
         try:
-            channel_id = self.mm.get_channel_id(user.mattermost_id)
+            channel_id = await self.mm.get_channel_id(user.mattermost_id)
             if not channel_id:
                 return
             
@@ -236,7 +236,7 @@ class NotificationManager:
                 cached.end_time
             )
             
-            self.mm.send_message(channel_id, message)
+            await self.mm.send_message(channel_id, message)
             logger.info(f"Sent cancellation notification to {user.mattermost_id}")
         
         except Exception as e:
@@ -245,7 +245,7 @@ class NotificationManager:
     async def _notify_rescheduled_meeting(self, user, cached: MeetingCache, new_event: Dict):
         """Отправить уведомление о переносе встречи"""
         try:
-            channel_id = self.mm.get_channel_id(user.mattermost_id)
+            channel_id = await self.mm.get_channel_id(user.mattermost_id)
             if not channel_id:
                 return
             
@@ -257,7 +257,7 @@ class NotificationManager:
                 datetime.fromisoformat(new_event.get('end_time', ''))
             )
             
-            self.mm.send_message(channel_id, message)
+            await self.mm.send_message(channel_id, message)
             logger.info(f"Sent rescheduled notification to {user.mattermost_id}")
         
         except Exception as e:
