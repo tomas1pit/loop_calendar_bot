@@ -22,8 +22,8 @@ class ActionHandler:
             action = context.get('action')
             user_id = context.get('user_id')
             
-            # Получить канал для личного сообщения
-            channel_id = self.bot.mm.get_channel_id(user_id)
+            # Получить канал для личного сообщения (async вызов)
+            channel_id = await self.bot.mm.get_channel_id(user_id)
             
             if action == ButtonActions.TODAY_ALL_MEETINGS:
                 await self.show_today_all_meetings(user_id, channel_id)
@@ -58,7 +58,7 @@ class ActionHandler:
         try:
             user = self.bot.logic.get_user(user_id)
             if not user:
-                self.bot.mm.send_message(channel_id, "Пожалуйста, авторизуйтесь сначала")
+                await self.bot.mm.send_message(channel_id, "Пожалуйста, авторизуйтесь сначала")
                 return
             
             # Получить встречи
@@ -71,19 +71,19 @@ class ActionHandler:
             
             # Показать выпадающее меню для выбора встречи
             if meetings:
-                self.bot.mm.send_message(channel_id, message)
+                await self.bot.mm.send_message(channel_id, message)
                 # TODO: Добавить интерактивное меню выбора встречи
         
         except Exception as e:
             logger.error(f"Error showing today meetings: {e}")
-            self.bot.mm.send_message(channel_id, "Ошибка при получении встреч")
+            await self.bot.mm.send_message(channel_id, "Ошибка при получении встреч")
     
     async def show_today_current_meetings(self, user_id: str, channel_id: str):
         """Показать текущие встречи"""
         try:
             user = self.bot.logic.get_user(user_id)
             if not user:
-                self.bot.mm.send_message(channel_id, "Пожалуйста, авторизуйтесь сначала")
+                await self.bot.mm.send_message(channel_id, "Пожалуйста, авторизуйтесь сначала")
                 return
             
             # Получить встречи
@@ -94,11 +94,11 @@ class ActionHandler:
             message = "**Текущие и будущие встречи на сегодня**\n\n"
             message += self.bot.logic.format_meetings_table(meetings)
             
-            self.bot.mm.send_message(channel_id, message)
+            await self.bot.mm.send_message(channel_id, message)
         
         except Exception as e:
             logger.error(f"Error showing current meetings: {e}")
-            self.bot.mm.send_message(channel_id, "Ошибка при получении встреч")
+            await self.bot.mm.send_message(channel_id, "Ошибка при получении встреч")
     
     async def start_create_meeting(self, user_id: str, channel_id: str):
         """Начать создание встречи"""
@@ -106,14 +106,14 @@ class ActionHandler:
             from ui_messages import UIMessages
             
             message = UIMessages.create_meeting_step_1()
-            self.bot.mm.send_message(channel_id, message)
+            await self.bot.mm.send_message(channel_id, message)
             
             # Установить состояние
             self.bot.logic.set_user_state(user_id, "creating_meeting_title")
         
         except Exception as e:
             logger.error(f"Error starting create meeting: {e}")
-            self.bot.mm.send_message(channel_id, "Ошибка при создании встречи")
+            await self.bot.mm.send_message(channel_id, "Ошибка при создании встречи")
     
     async def logout_user(self, user_id: str, channel_id: str):
         """Разлогинить пользователя"""
@@ -121,12 +121,12 @@ class ActionHandler:
             self.bot.logic.delete_user(user_id)
             self.bot.logic.clear_user_state(user_id)
             
-            self.bot.mm.send_message(channel_id, 
+            await self.bot.mm.send_message(channel_id, 
                 "✅ Вы успешно разлогинены. Все ваши данные удалены.")
         
         except Exception as e:
             logger.error(f"Error logging out user: {e}")
-            self.bot.mm.send_message(channel_id, "Ошибка при разлогинивании")
+            await self.bot.mm.send_message(channel_id, "Ошибка при разлогинивании")
     
     async def skip_description(self, user_id: str, channel_id: str):
         """Пропустить добавление описания"""
@@ -141,7 +141,7 @@ class ActionHandler:
         
         except Exception as e:
             logger.error(f"Error skipping description: {e}")
-            self.bot.mm.send_message(channel_id, "Ошибка при пропуске описания")
+            await self.bot.mm.send_message(channel_id, "Ошибка при пропуске описания")
     
     async def skip_location(self, user_id: str, channel_id: str):
         """Пропустить добавление места"""
@@ -156,7 +156,7 @@ class ActionHandler:
         
         except Exception as e:
             logger.error(f"Error skipping location: {e}")
-            self.bot.mm.send_message(channel_id, "Ошибка при пропуске места")
+            await self.bot.mm.send_message(channel_id, "Ошибка при пропуске места")
     
     async def show_meeting_details(self, user_id: str, channel_id: str, meeting_id: str):
         """Показать детали встречи"""
@@ -166,7 +166,7 @@ class ActionHandler:
         
         except Exception as e:
             logger.error(f"Error showing meeting details: {e}")
-            self.bot.mm.send_message(channel_id, "Ошибка при получении деталей встречи")
+            await self.bot.mm.send_message(channel_id, "Ошибка при получении деталей встречи")
 
 
 async def start_web_server(bot, host: str = "0.0.0.0", port: int = 8080):
