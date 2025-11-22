@@ -190,17 +190,9 @@ class MattermostWebSocketListener:
         logger.info("WebSocket disconnected")
     
     def _send_menu_reply(self, user_id: str, channel_id: str, root_id: str):
-        """Отправить главное меню в ответ на упоминание"""
+        """Отправить главное меню в ответ на упоминание (в личный чат)"""
         try:
-            logger.info(f"Sending menu reply to user {user_id} in channel {channel_id}")
-            
-            # Простое меню в виде текста
-            menu_text = """**Календарь Бот Главное Меню**
-
-Выберите действие:
-1️⃣ Показать встречи на сегодня
-2️⃣ Создать встречу
-3️⃣ Настройки"""
+            logger.info(f"Sending menu to user {user_id}")
             
             # Используем синхронный HTTP запрос напрямую
             base_url = Config.MATTERMOST_BASE_URL.rstrip('/')
@@ -209,25 +201,107 @@ class MattermostWebSocketListener:
                 'Content-Type': 'application/json'
             }
             
+            # Получить прямой канал с пользователем
+            logger.info(f"Getting direct channel with user {user_id}...")
+            channel_response = requests.post(
+                f"{base_url}/api/v4/channels/direct",
+                headers=headers,
+                json=[user_id],
+                timeout=10,
+                verify=False
+            )
+            
+            if channel_response.status_code not in [200, 201]:
+                logger.error(f"Failed to get direct channel: HTTP {channel_response.status_code}, response: {channel_response.text}")
+                return
+            
+            dm_channel = channel_response.json()
+            dm_channel_id = dm_channel.get('id')
+            logger.info(f"Direct channel ID: {dm_channel_id}")
+            
+            # Создать меню с кнопками (attachments)
+            menu_text = "**Главное меню**\n\nВыберите действие:"
+            
+            attachments = [
+                {
+                    "text": "Выберите действие:",
+                    "actions": [
+                        {
+                            "id": "show_today_all",
+                            "name": "📅 Все встречи на сегодня",
+                            "type": "button",
+                            "style": "primary",
+                            "integration": {
+                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                                "context": {
+                                    "action": "show_today_all_meetings",
+                                    "user_id": user_id
+                                }
+                            }
+                        },
+                        {
+                            "id": "show_today_current",
+                            "name": "⏱️ Текущие встречи",
+                            "type": "button",
+                            "integration": {
+                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                                "context": {
+                                    "action": "show_today_current_meetings",
+                                    "user_id": user_id
+                                }
+                            }
+                        },
+                        {
+                            "id": "create_meeting",
+                            "name": "➕ Создать встречу",
+                            "type": "button",
+                            "style": "primary",
+                            "integration": {
+                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                                "context": {
+                                    "action": "create_meeting",
+                                    "user_id": user_id
+                                }
+                            }
+                        },
+                        {
+                            "id": "logout",
+                            "name": "🚪 Разлогиниться",
+                            "type": "button",
+                            "style": "danger",
+                            "integration": {
+                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                                "context": {
+                                    "action": "logout",
+                                    "user_id": user_id
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+            
             post_data = {
-                'channel_id': channel_id,
+                'channel_id': dm_channel_id,
                 'message': menu_text,
-                'root_id': root_id
+                'props': {
+                    'attachments': attachments
+                }
             }
             
-            logger.info("Sending POST request to Mattermost API...")
+            logger.info("Sending menu with buttons...")
             response = requests.post(
                 f"{base_url}/api/v4/posts",
                 headers=headers,
                 json=post_data,
                 timeout=10,
-                verify=False  # Отключаем проверку SSL как в mattermost_manager
+                verify=False
             )
             
             logger.info(f"Response status: {response.status_code}")
             
             if response.status_code == 201:
-                logger.info("Menu sent successfully")
+                logger.info("Menu sent successfully to direct channel")
             else:
                 logger.error(f"Failed to send menu: HTTP {response.status_code}, response: {response.text}")
         
