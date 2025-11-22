@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, time as _time
 import json
 from typing import Dict
 from config import Config
@@ -522,12 +522,11 @@ class Bot:
 
             # date_iso содержит локализованный datetime (с таймзоной), time_iso — время без TZ
             start_date = datetime.fromisoformat(date_iso)
-                from datetime import time as _time
-                try:
-                    time_only = _time.fromisoformat(time_iso)
-                except ValueError:
-                    await self.mm.send_message(channel_id, "Ошибка: неверный формат времени встречи")
-                    return
+            try:
+                time_only = _time.fromisoformat(time_iso)
+            except ValueError:
+                await self.mm.send_message(channel_id, "Ошибка: неверный формат времени встречи")
+                return
 
             start = start_date.replace(hour=time_only.hour, minute=time_only.minute,
                                        second=0, microsecond=0)
