@@ -39,6 +39,12 @@ class MattermostWebSocketListener:
                 
                 logger.info("WebSocket connection established")
                 
+                # Сначала получить приветствие (hello) от сервера
+                hello_response = self.ws.recv()
+                if hello_response:
+                    hello_data = json.loads(hello_response)
+                    logger.debug(f"Received hello: {hello_data.get('event', 'unknown')}")
+                
                 # Отправить токен аутентификации
                 auth_msg = {
                     "seq": self.seq,
@@ -56,9 +62,12 @@ class MattermostWebSocketListener:
                 response = self.ws.recv()
                 if response:
                     auth_response = json.loads(response)
-                    logger.info(f"Auth response: {auth_response.get('status', 'unknown')}")
+                    logger.debug(f"Auth response: {auth_response}")
                     
-                    if auth_response.get('status') == 'OK':
+                    # Проверяем статус аутентификации - может быть в разных полях
+                    status = auth_response.get('status') or (auth_response.get('data', {}).get('status') if isinstance(auth_response.get('data'), dict) else None)
+                    
+                    if status == 'OK' or auth_response.get('event') == 'authenticated':
                         logger.info("WebSocket authenticated successfully")
                         # Запустить цикл слушания
                         self._listen()
