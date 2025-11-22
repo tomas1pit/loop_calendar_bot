@@ -58,31 +58,89 @@ class CalDAVManager:
             return False
     
     async def get_calendars(self) -> List[Dict[str, str]]:
-        """Получить список календарей (пытаемся несколько вариантов путей)"""
-        candidates = [
-            f"{self.principal_url}calendar/",
-            f"{self.base_url}/dav/{self.email}/calendar/",
-            f"{self.base_url}/dav/{self.email}/",
-            f"{self.base_url}/calendars/{self.email}/",
-        ]
-        found: List[Dict[str, str]] = []
+        """Получить список календарей.
+
+        1. Делаем PROPFIND Depth=1 по principal URL и ищем ресурсы типа calendar.
+        2. Извлекаем displayname / href.
+        3. Приоритизируем displayname == 'Main' или 'Основной' (регистр игнорируем).
+        4. Фоллбек: пробуем набор кандидатных путей (как раньше).
+        """
         try:
             session = await self._get_session()
-            headers = {"Depth": "0"}
+
+            calendars: List[Dict[str, str]] = []
+            headers = {"Depth": "1"}
+            try:
+                async with session.request("PROPFIND", self.principal_url, headers=headers) as resp:
+                    text = await resp.text()
+                    if resp.status not in (200, 207):
+                        logger.debug(f"Principal PROPFIND failed: {resp.status} {self.principal_url}")
+                    else:
+                        from xml.etree import ElementTree as ET
+                        ns = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav"}
+                        try:
+                            root = ET.fromstring(text)
+                            for response in root.findall("d:response", ns):
+                                href_el = response.find("d:href", ns)
+                                propstat = response.find("d:propstat", ns)
+                                if href_el is None or propstat is None:
+                                    continue
+                                prop = propstat.find("d:prop", ns)
+                                if prop is None:
+                                    continue
+                                rtype = prop.find("d:resourcetype", ns)
+                                if rtype is None:
+                                    continue
+                                is_calendar = rtype.find("c:calendar", ns) is not None
+                                if not is_calendar:
+                                    continue
+                                displayname_el = prop.find("d:displayname", ns)
+                                displayname = displayname_el.text.strip() if displayname_el is not None and displayname_el.text else ""
+                                href = href_el.text.strip() if href_el.text else ""
+                                if href:
+                                    calendars.append({"href": href if href.endswith('/') else href + '/', "name": displayname or "Calendar"})
+                        except Exception as e:
+                            logger.debug(f"Failed to parse principal PROPFIND XML: {e}")
+            except Exception as e:
+                logger.debug(f"Error during principal PROPFIND: {e}")
+
+            # Приоритизируем Main / Основной
+            preferred = []
+            for c in calendars:
+                name_lower = c["name"].lower()
+                if name_lower in ("main", "основной"):
+                    preferred.append(c)
+
+            if preferred:
+                for p in preferred:
+                    logger.info(f"CalDAV preferred calendar detected: {p['href']} name={p['name']}")
+                return preferred
+
+            if calendars:
+                for c in calendars:
+                    logger.info(f"CalDAV calendar detected: {c['href']} name={c['name']}")
+                return calendars
+
+            # Если не нашли через автоматический способ — пробуем кандидаты (фоллбек)
+            candidates = [
+                f"{self.principal_url}calendar/",
+                f"{self.base_url}/dav/{self.email}/calendar/",
+                f"{self.base_url}/dav/{self.email}/",
+                f"{self.base_url}/calendars/{self.email}/",
+            ]
             for href in candidates:
                 try:
-                    async with session.request("PROPFIND", href, headers=headers) as resp:
+                    async with session.request("PROPFIND", href, headers={"Depth": "0"}) as resp:
                         if resp.status in (200, 207):
-                            found.append({"href": href, "name": "Calendar"})
-                            logger.info(f"CalDAV calendar path detected: {href}")
-                            break
+                            logger.info(f"CalDAV fallback calendar path detected: {href}")
+                            return [{"href": href, "name": "Calendar"}]
                         else:
-                            logger.debug(f"CalDAV calendar path probe failed: {href} -> {resp.status}")
+                            logger.debug(f"CalDAV fallback probe failed: {href} -> {resp.status}")
                 except Exception as e:
-                    logger.debug(f"CalDAV calendar path probe error {href}: {e}")
-            if not found:
-                logger.error("No CalDAV calendar path found among candidates")
-            return found
+                    logger.debug(f"CalDAV fallback probe error {href}: {e}")
+
+            logger.error("No CalDAV calendar path found after enumeration and fallback probes")
+            return []
         except Exception as e:
             logger.error(f"Error getting calendars: {e}")
             return []
