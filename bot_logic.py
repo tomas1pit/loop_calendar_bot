@@ -149,6 +149,12 @@ class BotLogic:
                     "location": ev.get("location", ""),
                     "organizer": ev.get("organizer", ""),
                 })
+                try:
+                    logger.debug(
+                        f"Normalize uid={ev.get('uid')} title='{title}' start_raw='{start_iso}' end_raw='{end_iso}' start_parsed={start_dt} end_parsed={end_dt}"
+                    )
+                except Exception:
+                    pass
             except Exception:
                 continue
         try:

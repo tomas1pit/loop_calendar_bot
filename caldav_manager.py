@@ -497,8 +497,17 @@ class CalDAVManager:
                         try:
                             uid = str(component.get("uid", ""))
                             title = str(component.get("summary", "Без названия"))
-                            dtstart = component.get("dtstart").dt
-                            dtend = component.get("dtend").dt
+                            raw_dtstart = component.get("dtstart")
+                            raw_dtend = component.get("dtend")
+                            dtstart = raw_dtstart.dt if raw_dtstart else None
+                            dtend = raw_dtend.dt if raw_dtend else None
+                            # Debug raw values + tzinfo
+                            try:
+                                logger.debug(
+                                    f"VEVENT raw uid={uid} dtstart_repr={repr(raw_dtstart)} dtend_repr={repr(raw_dtend)} parsed_start={dtstart} parsed_end={dtend} tzstart={getattr(dtstart,'tzinfo',None)} tzend={getattr(dtend,'tzinfo',None)}"
+                                )
+                            except Exception:
+                                pass
                             tz = pytz.timezone(Config.TZ)
                             if not isinstance(dtstart, datetime):
                                 dtstart = datetime.combine(dtstart, datetime.min.time())
@@ -538,6 +547,10 @@ class CalDAVManager:
                                 "organizer": organizer_email,
                                 "status": status,
                             })
+                            try:
+                                logger.debug(f"Appended event uid={uid} start={dtstart.isoformat()} end={dtend.isoformat()} attendees={len(attendees)}")
+                            except Exception:
+                                pass
                         except Exception as ve_inner:
                             if Config.CALDAV_LOG_PARSE_ERRORS:
                                 logger.debug(f"Failed VEVENT parse uid={component.get('uid')} err={ve_inner}")
