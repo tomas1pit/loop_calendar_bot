@@ -426,6 +426,8 @@ class CalDAVManager:
                     block_index += 1
             if events:
                 logger.info(f"Parsed {len(events)} CalDAV events from REPORT response")
+            else:
+                logger.info("Parsed 0 CalDAV events from REPORT response")
         except Exception as e:
             logger.error(f"Error parsing CalDAV events XML: {e}")
         return events
