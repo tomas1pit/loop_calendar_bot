@@ -6,10 +6,14 @@ import re
 
 class MattermostManager:
     def __init__(self, base_url: str, token: str, bot_name: str):
+        # Remove trailing slash if present
+        base_url = base_url.rstrip('/')
+        
         self.driver = Driver({
             'url': base_url,
             'token': token,
-            'basePath': '/api/v4'
+            'basePath': '/api/v4',
+            'verify': True
         })
         self.bot_name = bot_name
         self.user = None
