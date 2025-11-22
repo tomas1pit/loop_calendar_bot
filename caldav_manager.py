@@ -256,6 +256,104 @@ class CalDAVManager:
                     logger.info("ALL_EVENTS empty after get_events aggregation")
             except Exception:
                 pass
+
+        # Если ничего не нашли через REPORT парсинг — пробуем fallback через библиотеку caldav
+        if not all_events:
+            try:
+                import caldav
+                logger.info("Fallback: using python-caldav date_search")
+                base_url = self.base_url.rstrip('/')
+                principal = caldav.Principal(
+                    client=caldav.DAVClient(url=base_url, username=self.email, password=self.password),
+                    url=self.principal_url,
+                )
+                calendars = principal.calendars()
+                if not calendars:
+                    logger.info("Fallback caldav: no calendars returned by principal")
+                    return []
+                preferred_names = {"main", "основной"}
+                selected = None
+                for c in calendars:
+                    name = getattr(c, 'name', '') or ''
+                    if name.lower() in preferred_names:
+                        selected = c
+                        break
+                if selected is None:
+                    selected = calendars[0]
+                # date_search требует aware дат с tzinfo
+                tz_local = pytz.timezone(Config.TZ)
+                s_local = (start_date or datetime.now()).replace(tzinfo=tz_local)
+                e_local = (end_date or (start_date or datetime.now()) + timedelta(days=1)).replace(tzinfo=tz_local)
+                raw_events = selected.date_search(s_local, e_local)
+                logger.info(f"Fallback caldav: date_search returned {len(raw_events)} items")
+                for ev_obj in raw_events:
+                    try:
+                        # Получить сырые данные ICS
+                        ics_data = getattr(ev_obj, 'data', None)
+                        if ics_data is None:
+                            ics_data = ev_obj._data if hasattr(ev_obj, '_data') else None
+                        if not ics_data:
+                            continue
+                        # Парсим ics через icalendar
+                        try:
+                            cal = Calendar.from_ical(ics_data)
+                        except Exception as pe:
+                            logger.debug(f"Fallback caldav: ical parse failed {pe}")
+                            continue
+                        for comp in cal.walk():
+                            if comp.name != 'VEVENT':
+                                continue
+                            try:
+                                uid = str(comp.get('uid', ''))
+                                title = str(comp.get('summary', 'Без названия'))
+                                dtstart = comp.get('dtstart').dt
+                                dtend = comp.get('dtend').dt if comp.get('dtend') else None
+                                tz_cfg = pytz.timezone(Config.TZ)
+                                if isinstance(dtstart, datetime):
+                                    if dtstart.tzinfo is None:
+                                        dtstart = tz_cfg.localize(dtstart)
+                                    else:
+                                        dtstart = dtstart.astimezone(tz_cfg)
+                                if isinstance(dtend, datetime):
+                                    if dtend.tzinfo is None:
+                                        dtend = tz_cfg.localize(dtend)
+                                    else:
+                                        dtend = dtend.astimezone(tz_cfg)
+                                attendees: List[str] = []
+                                for att in comp.get_all('attendee', []):
+                                    a = str(att)
+                                    if a.lower().startswith('mailto:'):
+                                        a = a[7:]
+                                    attendees.append(a)
+                                organizer = comp.get('organizer')
+                                organizer_email = ''
+                                if organizer:
+                                    organizer_email = str(organizer)
+                                    if organizer_email.lower().startswith('mailto:'):
+                                        organizer_email = organizer_email[7:]
+                                events_dict = {
+                                    'uid': uid,
+                                    'title': title,
+                                    'start_time': dtstart.isoformat() if isinstance(dtstart, datetime) else '',
+                                    'end_time': dtend.isoformat() if isinstance(dtend, datetime) else '',
+                                    'attendees': attendees,
+                                    'description': str(comp.get('description', '')),
+                                    'location': str(comp.get('location', '')),
+                                    'organizer': organizer_email,
+                                    'status': str(comp.get('status', 'CONFIRMED')),
+                                }
+                                all_events.append(events_dict)
+                            except Exception as ce_inner:
+                                logger.debug(f"Fallback caldav: error building event dict {ce_inner}")
+                    except Exception as ce_ev:
+                        logger.debug(f"Fallback caldav: error processing event object {ce_ev}")
+                if all_events:
+                    logger.info(f"Fallback caldav: aggregated {len(all_events)} events")
+                return all_events
+            except Exception as e_fb:
+                logger.info(f"Fallback caldav failed: {e_fb}")
+                return all_events
+        return all_events
     
     async def create_event(self, title: str, start: datetime, end: datetime, 
                           attendees: List[str] = None, description: str = "", 
