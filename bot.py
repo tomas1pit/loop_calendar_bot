@@ -338,8 +338,25 @@ class Bot:
     async def ask_meeting_attendees(self, user_id: str, channel_id: str, state_data: Dict):
         """Попросить участников встречи"""
         message = UIMessages.create_meeting_step_9()
-        await self.mm.send_message(channel_id, message)
-        
+
+        # Кнопка «Никого не приглашать»
+        attachments = [{
+            "fallback": "No invite",
+            "actions": [{
+                "name": "Никого не приглашать",
+                "style": "danger",
+                "type": "button",
+                "integration": {
+                    "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                    "context": {
+                        "action": ButtonActions.NO_INVITE,
+                        "user_id": user_id,
+                    },
+                },
+            }],
+        }]
+
+        await self.mm.create_post_with_attachments(channel_id, message, attachments)
         self.logic.set_user_state(user_id, "creating_meeting_attendees", state_data)
     
     async def ask_meeting_description(self, user_id: str, channel_id: str, state_data: Dict):
@@ -394,16 +411,48 @@ class Bot:
                 await self.mm.send_message(channel_id, "Ошибка: пользователь не авторизован")
                 return
             
-            # TODO: Создать встречу в CalDAV
-            
             title = state_data.get('title', '')
-            attendees = state_data.get('attendees', [])
-            description = state_data.get('description', '')
-            location = state_data.get('location', '')
-            
-            message = UIMessages.meeting_created(title, 
-                                                datetime.now(),
-                                                datetime.now(),
+            attendees = state_data.get('attendees', []) or []
+            description = state_data.get('description', '') or ''
+            location = state_data.get('location', '') or ''
+
+            # Собираем дату/время начала и конца с учётом TZ
+            date_iso = state_data.get('date')  # iso строки из validate_date
+            time_iso = state_data.get('time')  # iso строки из validate_time
+            duration_min = state_data.get('duration', 30)
+
+            if not date_iso or not time_iso:
+                await self.mm.send_message(channel_id, "Ошибка: не удалось распознать дату или время встречи")
+                return
+
+            # date_iso содержит локализованный datetime (с таймзоной), time_iso — время без TZ
+            start_date = datetime.fromisoformat(date_iso)
+            time_only = datetime.fromisoformat(time_iso).time()
+
+            start = start_date.replace(hour=time_only.hour, minute=time_only.minute,
+                                       second=0, microsecond=0)
+            end = start + timedelta(minutes=int(duration_min))
+
+            from caldav_manager import CalDAVManager
+
+            caldav = CalDAVManager(user.email, self.logic.encryption.decrypt(user.encrypted_password))
+            created_ok = await caldav.create_event(
+                title=title,
+                start=start,
+                end=end,
+                attendees=attendees,
+                description=description,
+                location=location,
+            )
+            await caldav.close()
+
+            if not created_ok:
+                await self.mm.send_message(channel_id, "Не удалось создать встречу в календаре")
+                return
+
+            message = UIMessages.meeting_created(title,
+                                                start,
+                                                end,
                                                 attendees,
                                                 description,
                                                 location)

@@ -42,6 +42,9 @@ class ActionHandler:
             
             elif action == "skip_location":
                 await self.skip_location(user_id, channel_id)
+
+            elif action == ButtonActions.NO_INVITE:
+                await self.no_invite(user_id, channel_id)
             
             elif action == ButtonActions.SELECT_MEETING:
                 # meeting_id приходит как selected_option.value
@@ -234,6 +237,21 @@ class ActionHandler:
         except Exception as e:
             logger.error(f"Error skipping location: {e}")
             await self.bot.mm.send_message(channel_id, "Ошибка при пропуске места")
+
+    async def no_invite(self, user_id: str, channel_id: str):
+        """Обработать кнопку "Никого не приглашать""" 
+        try:
+            user_state = self.bot.logic.get_user_state(user_id)
+            state_data = json.loads(user_state.data) if user_state and user_state.data else {}
+
+            state_data['attendees'] = []
+
+            # Переходим сразу к описанию встречи
+            await self.bot.ask_meeting_description(user_id, channel_id, state_data)
+
+        except Exception as e:
+            logger.error(f"Error handling no_invite: {e}")
+            await self.bot.mm.send_message(channel_id, "Ошибка при обработке участников")
     
     async def show_meeting_details(self, user_id: str, channel_id: str, meeting_id: str):
         """Показать детали встречи"""
