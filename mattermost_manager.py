@@ -108,7 +108,7 @@ class MattermostManager:
             logger.error(f"Error creating direct channel: {e}")
             return None
     
-    async def send_message(self, channel_id: str, message: str, props: Dict = None) -> Optional[str]:
+    async def send_message(self, channel_id: str, message: str, props: Dict = None, root_id: str = None) -> Optional[str]:
         """Отправить сообщение в канал"""
         try:
             session = await self._ensure_session()
@@ -118,6 +118,8 @@ class MattermostManager:
             }
             if props:
                 post_data['props'] = props
+            if root_id:
+                post_data['root_id'] = root_id
             
             async with session.post(
                 f"{self.base_url}/api/v4/posts",
