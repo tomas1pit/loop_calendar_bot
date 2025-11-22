@@ -63,7 +63,7 @@ class CalDAVManager:
             # Упрощенная реализация - возвращаем основной календарь
             return [{
                 "href": f"{self.principal_url}calendar/",
-                "name": "Personal Calendar"
+                "name": "Personal Calendar",
             }]
         except Exception as e:
             logger.error(f"Error getting calendars: {e}")
@@ -77,24 +77,27 @@ class CalDAVManager:
             if not end_date:
                 end_date = start_date + timedelta(days=1)
             
-            # Пока серверная интеграция не реализована полностью, возвращаем пустой
-            # список, чтобы верхний уровень мог работать без ошибок.
-            # Когда будет готов серверный доступ, здесь нужно будет:
-            # 1) Отправлять REPORT-запрос `_build_calendar_query(start_date, end_date)`
-            #    на URL календаря.
-            # 2) Распарсить ответ и вернуть список словарей единого формата:
-            #    {
-            #      "uid": str,
-            #      "title": str,
-            #      "start_time": iso-строка,
-            #      "end_time": iso-строка,
-            #      "attendees": [emails],
-            #      "description": str,
-            #      "location": str,
-            #      "organizer": email,
-            #      "status": str
-            #    }
-            return []
+            session = await self._get_session()
+
+            # Берём первый (основной) календарь
+            calendars = await self.get_calendars()
+            if not calendars:
+                return []
+            cal_href = calendars[0]["href"]
+
+            body = self._build_calendar_query(start_date, end_date)
+            headers = {
+                "Depth": "1",
+                "Content-Type": "application/xml; charset=utf-8",
+            }
+
+            async with session.request("REPORT", cal_href, data=body, headers=headers) as resp:
+                if resp.status not in (200, 207):
+                    logger.error(f"CalDAV REPORT failed: {resp.status}")
+                    return []
+                text = await resp.text()
+
+            return self._parse_events(text)
         except Exception as e:
             logger.error(f"Error getting events: {e}")
             return []
@@ -179,8 +182,103 @@ class CalDAVManager:
     
     def _parse_events(self, xml_text: str) -> List[Dict]:
         """Парсить XML ответ с событиями"""
-        events = []
-        # TODO: Полный парсинг XML с событиями
+        events: List[Dict] = []
+
+        if not Calendar:
+            return events
+
+        try:
+            # Очень упрощённый парсер: ищем блоки с VCALENDAR внутри XML
+            # и забираем оттуда VEVENT в формате ical.
+            from xml.etree import ElementTree as ET
+
+            root = ET.fromstring(xml_text)
+            ns = {
+                "d": "DAV:",
+                "c": "urn:ietf:params:xml:ns:caldav",
+            }
+
+            for resp in root.findall("d:response", ns):
+                propstat = resp.find("d:propstat", ns)
+                if propstat is None:
+                    continue
+                prop = propstat.find("d:prop", ns)
+                if prop is None:
+                    continue
+                caldata_el = prop.find("c:calendar-data", ns)
+                if caldata_el is None or not caldata_el.text:
+                    continue
+
+                ical_str = caldata_el.text
+                try:
+                    cal = Calendar.from_ical(ical_str)
+                except Exception:
+                    continue
+
+                for component in cal.walk():
+                    if component.name != "VEVENT":
+                        continue
+
+                    try:
+                        uid = str(component.get("uid", ""))
+                        title = str(component.get("summary", "Без названия"))
+
+                        dtstart = component.get("dtstart").dt
+                        dtend = component.get("dtend").dt
+
+                        # Нормализуем в timezone из конфигурации
+                        tz = pytz.timezone(Config.TZ)
+                        if not isinstance(dtstart, datetime):
+                            dtstart = datetime.combine(dtstart, datetime.min.time())
+                        if not isinstance(dtend, datetime):
+                            dtend = datetime.combine(dtend, datetime.min.time())
+
+                        if dtstart.tzinfo is None:
+                            dtstart = tz.localize(dtstart)
+                        else:
+                            dtstart = dtstart.astimezone(tz)
+
+                        if dtend.tzinfo is None:
+                            dtend = tz.localize(dtend)
+                        else:
+                            dtend = dtend.astimezone(tz)
+
+                        # Участники
+                        attendees: List[str] = []
+                        for att in component.get_all("attendee", []):
+                            addr = str(att)
+                            if addr.lower().startswith("mailto:"):
+                                addr = addr[7:]
+                            attendees.append(addr)
+
+                        organizer = component.get("organizer")
+                        organizer_email = ""
+                        if organizer:
+                            organizer_email = str(organizer)
+                            if organizer_email.lower().startswith("mailto:"):
+                                organizer_email = organizer_email[7:]
+
+                        description = str(component.get("description", ""))
+                        location = str(component.get("location", ""))
+                        status = str(component.get("status", "CONFIRMED"))
+
+                        events.append({
+                            "uid": uid,
+                            "title": title,
+                            "start_time": dtstart.isoformat(),
+                            "end_time": dtend.isoformat(),
+                            "attendees": attendees,
+                            "description": description,
+                            "location": location,
+                            "organizer": organizer_email,
+                            "status": status,
+                        })
+                    except Exception:
+                        continue
+
+        except Exception as e:
+            logger.error(f"Error parsing CalDAV events XML: {e}")
+
         return events
     
     @staticmethod

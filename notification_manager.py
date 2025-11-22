@@ -44,8 +44,8 @@ class NotificationManager:
                 tomorrow = today + timedelta(days=1)
                 tomorrow_end = tomorrow.replace(hour=23, minute=59, second=59)
                 
-                # TODO: Получить события из CalDAV
-                current_events = []  # await caldav_manager.get_events(...)
+                # Получить события из CalDAV в едином формате с BotLogic
+                current_events = await caldav_manager.get_events(today, tomorrow_end)
                 
                 # Получить кэшированные события
                 cached_events = self._get_cached_events(user.mattermost_id, today, tomorrow_end)
@@ -175,7 +175,7 @@ class NotificationManager:
         reminder_count = 0
         
         try:
-            channel_id = self.mm.get_channel_id(user.mattermost_id)
+            channel_id = await self.mm.get_channel_id(user.mattermost_id)
             if not channel_id:
                 return 0
             
