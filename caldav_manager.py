@@ -188,19 +188,18 @@ class CalDAVManager:
     
     async def get_events(self, start_date: datetime = None, end_date: datetime = None) -> List[Dict]:
         """Получить события за период"""
+        all_events: List[Dict] = []
         try:
             if not start_date:
                 start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             if not end_date:
                 end_date = start_date + timedelta(days=1)
-            
-            session = await self._get_session()
 
-            # Берём первый (основной) календарь
+            session = await self._get_session()
             calendars = await self.get_calendars()
             if not calendars:
+                logger.info("No calendars discovered to fetch events")
                 return []
-            cal_href = calendars[0]["href"]
 
             body = self._build_calendar_query(start_date, end_date)
             headers = {
@@ -208,16 +207,46 @@ class CalDAVManager:
                 "Content-Type": "application/xml; charset=utf-8",
             }
 
-            async with session.request("REPORT", cal_href, data=body, headers=headers) as resp:
-                if resp.status not in (200, 207):
-                    logger.error(f"CalDAV REPORT failed: {resp.status} for {cal_href}")
-                    return []
-                text = await resp.text()
+            for cal in calendars:
+                cal_href = cal.get("href")
+                if not cal_href:
+                    continue
+                try:
+                    async with session.request("REPORT", cal_href, data=body, headers=headers) as resp:
+                        if resp.status not in (200, 207):
+                            logger.debug(f"CalDAV REPORT failed: {resp.status} for {cal_href}")
+                            continue
+                        text = await resp.text()
+                    evs = self._parse_events(text)
+                    logger.debug(f"Fetched {len(evs)} events from {cal_href}")
+                    all_events.extend(evs)
+                except Exception as ce:
+                    logger.debug(f"Error fetching events from {cal_href}: {ce}")
 
-            return self._parse_events(text)
+            # Если за указанный день ничего не нашли, делаем расширенный диапазон (7 дней вперёд) как fallback
+            if not all_events:
+                ext_start = start_date
+                ext_end = start_date + timedelta(days=7)
+                body_ext = self._build_calendar_query(ext_start, ext_end)
+                for cal in calendars:
+                    cal_href = cal.get("href")
+                    if not cal_href:
+                        continue
+                    try:
+                        async with session.request("REPORT", cal_href, data=body_ext, headers=headers) as resp:
+                            if resp.status not in (200, 207):
+                                continue
+                            text = await resp.text()
+                        evs = self._parse_events(text)
+                        logger.debug(f"Fallback range fetched {len(evs)} events from {cal_href}")
+                        all_events.extend(evs)
+                    except Exception:
+                        continue
+
+            return all_events
         except Exception as e:
             logger.error(f"Error getting events: {e}")
-            return []
+            return all_events
     
     async def create_event(self, title: str, start: datetime, end: datetime, 
                           attendees: List[str] = None, description: str = "", 
