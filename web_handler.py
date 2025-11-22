@@ -49,17 +49,21 @@ class ActionHandler:
             elif action == ButtonActions.CANCEL_WIZARD:
                 await self.cancel_wizard(user_id, channel_id)
             
-            elif action == ButtonActions.SELECT_MEETING:
-                # meeting_id приходит как selected_option.value
-                meeting_id = (context.get("selected_option") or {}).get("value")
+            elif action == ButtonActions.SELECT_MEETING or (action and action.startswith("select_meeting")):
+                # selected_option может быть либо строкой UID, либо dict {value: UID}
+                selected_raw = context.get("selected_option")
+                meeting_id = None
+                if isinstance(selected_raw, dict):
+                    meeting_id = selected_raw.get("value")
+                elif isinstance(selected_raw, str):
+                    meeting_id = selected_raw.strip()
                 if not meeting_id:
-                    # Может прийти в корне data
                     data_ctx = data.get("data", {}) or {}
                     sel = data_ctx.get("selected_option")
                     if isinstance(sel, dict):
                         meeting_id = sel.get("value")
                     elif isinstance(sel, str):
-                        meeting_id = sel
+                        meeting_id = sel.strip()
                 if meeting_id:
                     await self.show_meeting_details(user_id, channel_id, meeting_id)
             

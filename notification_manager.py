@@ -125,10 +125,38 @@ class NotificationManager:
     
     def _event_changed_time(self, cached: MeetingCache, current: Dict) -> bool:
         """Проверить, изменилось ли время события"""
-        current_start = datetime.fromisoformat(current.get('start_time', ''))
-        current_end = datetime.fromisoformat(current.get('end_time', ''))
-        
-        return (cached.start_time != current_start or cached.end_time != current_end)
+        try:
+            tz_local = self.tz
+            current_start_raw = current.get('start_time', '')
+            current_end_raw = current.get('end_time', '')
+            if not current_start_raw or not current_end_raw:
+                return False
+            current_start = datetime.fromisoformat(current_start_raw)
+            current_end = datetime.fromisoformat(current_end_raw)
+            # Нормализуем в локальный TZ (если присутствует другой)
+            if current_start.tzinfo:
+                current_start = current_start.astimezone(tz_local)
+            else:
+                current_start = tz_local.localize(current_start)
+            if current_end.tzinfo:
+                current_end = current_end.astimezone(tz_local)
+            else:
+                current_end = tz_local.localize(current_end)
+            cached_start = cached.start_time.astimezone(tz_local) if cached.start_time.tzinfo else tz_local.localize(cached.start_time)
+            cached_end = cached.end_time.astimezone(tz_local) if cached.end_time.tzinfo else tz_local.localize(cached.end_time)
+            # Сравниваем с точностью до минуты (секунды/микросекунды игнорируем)
+            cached_start_min = cached_start.replace(second=0, microsecond=0)
+            cached_end_min = cached_end.replace(second=0, microsecond=0)
+            current_start_min = current_start.replace(second=0, microsecond=0)
+            current_end_min = current_end.replace(second=0, microsecond=0)
+            # Если равны по минутам — считаем не перенесено
+            if cached_start_min == current_start_min and cached_end_min == current_end_min:
+                return False
+            # Иначе перенесено только если реально изменилось начало или конец на уровне минут
+            return True
+        except Exception:
+            # В случае ошибки не шлем уведомление о переносе
+            return False
     
     def _is_today_or_tomorrow(self, event: Dict, today: datetime) -> bool:
         """Проверить, событие ли это на сегодня или завтра"""
