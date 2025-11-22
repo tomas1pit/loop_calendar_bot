@@ -351,9 +351,11 @@ class CalDAVManager:
             from xml.etree import ElementTree as ET
 
             root = ET.fromstring(xml_text)
+            # Добавляем оба варианта префикса (c и C) т.к. сервер использует заглавную C
             ns = {
                 "d": "DAV:",
                 "c": "urn:ietf:params:xml:ns:caldav",
+                "C": "urn:ietf:params:xml:ns:caldav",
             }
 
             for resp in root.findall("d:response", ns):
@@ -362,8 +364,13 @@ class CalDAVManager:
                     prop = propstat.find("d:prop", ns)
                     if prop is None:
                         continue
-                    caldata_el = prop.find("c:calendar-data", ns)
-                    if caldata_el is None or not caldata_el.text:
+                    # Ищем календарные данные независимо от префикса
+                    caldata_el = None
+                    for child in list(prop):
+                        if child.tag.endswith("calendar-data") and child.text:
+                            caldata_el = child
+                            break
+                    if caldata_el is None:
                         continue
 
                     ical_str = caldata_el.text.strip()
@@ -430,6 +437,8 @@ class CalDAVManager:
                             })
                         except Exception:
                             continue
+            if events:
+                logger.info(f"Parsed {len(events)} CalDAV events from REPORT response")
 
         except Exception as e:
             logger.error(f"Error parsing CalDAV events XML: {e}")
