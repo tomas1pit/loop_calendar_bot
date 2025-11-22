@@ -217,10 +217,13 @@ class CalDAVManager:
                             logger.debug(f"CalDAV REPORT failed: {resp.status} for {cal_href}")
                             continue
                         text = await resp.text()
-                        head_primary = text[:400].replace("\n", " ")
-                        logger.info(
-                            f"CalDAV REPORT RAW primary href={cal_href} status={resp.status} len={len(text)} head='{head_primary}'"
-                        )
+                        if Config.CALDAV_LOG_FULL_RAW:
+                            logger.info(f"CalDAV REPORT RAW PRIMARY href={cal_href} status={resp.status} len={len(text)}\n{text}")
+                        else:
+                            head_primary = text[:400].replace("\n", " ")
+                            logger.info(
+                                f"CalDAV REPORT RAW primary href={cal_href} status={resp.status} len={len(text)} head='{head_primary}'"
+                            )
                     evs = self._parse_events(text)
                     logger.debug(f"Fetched {len(evs)} events from {cal_href}")
                     all_events.extend(evs)
@@ -241,10 +244,13 @@ class CalDAVManager:
                             if resp.status not in (200, 207):
                                 continue
                             text = await resp.text()
-                            head_fallback = text[:400].replace("\n", " ")
-                            logger.info(
-                                f"CalDAV REPORT RAW fallback href={cal_href} status={resp.status} len={len(text)} head='{head_fallback}'"
-                            )
+                            if Config.CALDAV_LOG_FULL_RAW:
+                                logger.info(f"CalDAV REPORT RAW FALLBACK href={cal_href} status={resp.status} len={len(text)}\n{text}")
+                            else:
+                                head_fallback = text[:400].replace("\n", " ")
+                                logger.info(
+                                    f"CalDAV REPORT RAW fallback href={cal_href} status={resp.status} len={len(text)} head='{head_fallback}'"
+                                )
                         evs = self._parse_events(text)
                         logger.debug(f"Fallback range fetched {len(evs)} events from {cal_href}")
                         all_events.extend(evs)
@@ -435,7 +441,9 @@ class CalDAVManager:
                                 "organizer": organizer_email,
                                 "status": status,
                             })
-                        except Exception:
+                        except Exception as ve:
+                            if Config.CALDAV_LOG_PARSE_ERRORS:
+                                logger.debug(f"Parse error VEVENT uid={component.get('uid')} err={ve}")
                             continue
             if events:
                 logger.info(f"Parsed {len(events)} CalDAV events from REPORT response")

@@ -25,6 +25,10 @@ class Config:
     # Bot behavior
     CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))  # seconds
     REMINDER_MINUTES = int(os.getenv("REMINDER_MINUTES", "15"))  # minutes
+
+    # Debug flags
+    CALDAV_LOG_FULL_RAW = os.getenv("CALDAV_LOG_FULL_RAW", "1") == "1"  # Включить полный вывод REPORT XML
+    CALDAV_LOG_PARSE_ERRORS = os.getenv("CALDAV_LOG_PARSE_ERRORS", "1") == "1"  # Логировать ошибки парсинга VEVENT
     
     # Bot name
     BOT_NAME = "calendar_bot"
