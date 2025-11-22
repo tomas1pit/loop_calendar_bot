@@ -118,6 +118,16 @@ class BotLogic:
                 pass
 
         normalized: List[Dict] = []
+        # Диагностика количества сырых событий
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Raw events fetched for {user_email}: count={len(events)} start={start.isoformat()} end={end.isoformat()}")
+            for idx, evdbg in enumerate(events[:10]):
+                logger.info(f"Event[{idx}] uid={evdbg.get('uid')} title={evdbg.get('title')} start={evdbg.get('start_time')} end={evdbg.get('end_time')}")
+        except Exception:
+            pass
+
         for ev in events:
             try:
                 title = ev.get("title") or "Без названия"
@@ -141,6 +151,10 @@ class BotLogic:
                 })
             except Exception:
                 continue
+        try:
+            logger.info(f"Normalized events for {user_email}: count={len(normalized)}")
+        except Exception:
+            pass
         return normalized
     
     async def get_current_meetings(self, mattermost_id: str, user_email: str,

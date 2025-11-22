@@ -246,6 +246,16 @@ class CalDAVManager:
         except Exception as e:
             logger.error(f"Error getting events: {e}")
             return all_events
+        finally:
+            # Диагностика итогового списка событий (первые 10)
+            try:
+                if all_events:
+                    for i, ev in enumerate(all_events[:10]):
+                        logger.info(f"ALL_EVENTS[{i}] uid={ev.get('uid')} title={ev.get('title')} start={ev.get('start_time')} end={ev.get('end_time')}")
+                else:
+                    logger.info("ALL_EVENTS empty after get_events aggregation")
+            except Exception:
+                pass
     
     async def create_event(self, title: str, start: datetime, end: datetime, 
                           attendees: List[str] = None, description: str = "", 
