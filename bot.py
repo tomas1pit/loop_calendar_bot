@@ -494,7 +494,7 @@ class Bot:
             ],
         }]
         
-        self.mm.create_post_with_attachments(channel_id, message, attachments)
+        await self.mm.create_post_with_attachments(channel_id, message, attachments)
         
         self.logic.set_user_state(user_id, "creating_meeting_location", state_data)
     
