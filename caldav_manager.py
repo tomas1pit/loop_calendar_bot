@@ -87,85 +87,98 @@ class CalDAVManager:
                             root = ET.fromstring(text)
                             for response in root.findall("d:response", ns):
                                 href_el = response.find("d:href", ns)
-                                propstat = response.find("d:propstat", ns)
-                                if href_el is None or propstat is None:
-                                    continue
-                                prop = propstat.find("d:prop", ns)
-                                if prop is None:
-                                    continue
-                                rtype = prop.find("d:resourcetype", ns)
-                                displayname_el = prop.find("d:displayname", ns)
-                                displayname = displayname_el.text.strip() if displayname_el is not None and displayname_el.text else ""
-                                href = href_el.text.strip() if href_el.text else ""
-                                is_calendar = False
-                                if rtype is not None and rtype.find("c:calendar", ns) is not None:
-                                    is_calendar = True
-                                # Запоминаем корневую директорию календарей пользователя
-                                if href.endswith('/calendars/'):
-                                    calendars_root_href = href
-                                if is_calendar and href:
-                                    calendars.append({"href": href if href.endswith('/') else href + '/', "name": displayname or "Calendar"})
-                        except Exception as e:
-                            logger.info(f"Failed to parse principal PROPFIND XML: {e}")
-            except Exception as e:
-                logger.info(f"Error during principal PROPFIND: {e}")
+                                block_index = 0
+                                for resp in root.findall("d:response", ns):
+                                    for propstat in resp.findall("d:propstat", ns):
+                                        prop = propstat.find("d:prop", ns)
+                                        if prop is None:
+                                            continue
+                                        caldata_el = None
+                                        for child in list(prop):
+                                            if child.tag.endswith("calendar-data") and child.text:
+                                                caldata_el = child
+                                                break
+                                        if caldata_el is None:
+                                            continue
+                                        raw_ical = caldata_el.text or ""
+                                        ical_str = raw_ical.strip()
 
-            # Если нашли корневой каталог calendars, делаем второй проход Depth=1
-            if calendars_root_href and not calendars:
-                # Собираем абсолютный URL если ответ был относительным
-                if calendars_root_href.startswith('/'):
-                    calendars_root_url = self.base_url.rstrip('/') + calendars_root_href
-                else:
-                    calendars_root_url = calendars_root_href
-                logger.info(f"Enumerating calendars at {calendars_root_url}")
-                try:
-                    async with session.request("PROPFIND", calendars_root_url, headers={"Depth": "1"}) as resp2:
-                        text2 = await resp2.text()
-                        status2 = resp2.status
-                        logger.info(f"Calendars collection PROPFIND status={status2}")
-                        if status2 in (200,207):
-                            from xml.etree import ElementTree as ET
-                            ns = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav"}
-                            try:
-                                root2 = ET.fromstring(text2)
-                                for response in root2.findall("d:response", ns):
-                                    href_el = response.find("d:href", ns)
-                                    propstat = response.find("d:propstat", ns)
-                                    if href_el is None or propstat is None:
-                                        continue
-                                    prop = propstat.find("d:prop", ns)
-                                    if prop is None:
-                                        continue
-                                    rtype = prop.find("d:resourcetype", ns)
-                                    displayname_el = prop.find("d:displayname", ns)
-                                    displayname = displayname_el.text.strip() if displayname_el is not None and displayname_el.text else ""
-                                    href_child = href_el.text.strip() if href_el.text else ""
-                                    is_calendar = rtype is not None and rtype.find("c:calendar", ns) is not None
-                                    if is_calendar and href_child != calendars_root_href:
-                                        full_child_href = href_child if href_child.endswith('/') else href_child + '/'
-                                        if full_child_href.startswith('/'):
-                                            full_child_href = self.base_url.rstrip('/') + full_child_href
-                                        calendars.append({"href": full_child_href, "name": displayname or "Calendar"})
-                            except Exception as e:
-                                logger.info(f"Failed to parse calendars collection XML: {e}")
-                except Exception as e:
-                    logger.info(f"Error during calendars root enumeration: {e}")
+                                        # Удаляем управляющие символы (кроме переводов строк) которые ломают парсер
+                                        cleaned = ''.join(ch for ch in ical_str if ch in ('\n','\r') or ord(ch) >= 32)
+                                        parse_source = cleaned
+                                        parsed = False
+                                        try:
+                                            cal = Calendar.from_ical(parse_source)
+                                            parsed = True
+                                            logger.debug(f"Calendar-data block {block_index} parsed len={len(parse_source)}")
+                                        except Exception as e_first:
+                                            logger.debug(f"Calendar-data block {block_index} initial parse failed: {e_first}")
+                                            # Попытка ещё раз в байтовом виде (иногда помогает)
+                                            try:
+                                                cal = Calendar.from_ical(parse_source.encode('utf-8','ignore'))
+                                                parsed = True
+                                                logger.debug(f"Calendar-data block {block_index} parsed on second attempt (bytes) len={len(parse_source)}")
+                                            except Exception as e_second:
+                                                logger.debug(f"Calendar-data block {block_index} parse failed bytes: {e_second}")
+                                                block_index += 1
+                                                continue
 
-            # Приоритизируем Main / Основной
-            preferred = [c for c in calendars if c["name"].lower() in ("main", "основной")]
-            selected = preferred or calendars
-            if selected:
-                # Логируем только выбранные (приоритетные либо первые найденные)
-                for c in selected:
-                    logger.info(f"CalDAV calendar selected: {c['href']} name={c['name']}")
-                return selected
+                                        if not parsed:
+                                            block_index += 1
+                                            continue
 
-            # Если не нашли через автоматический способ — пробуем кандидаты (фоллбек)
-            candidates = [
-                f"{self.principal_url}calendar/",
-                f"{self.base_url}/dav/{self.email}/calendar/",
-                f"{self.base_url}/dav/{self.email}/",
-                f"{self.base_url}/calendars/{self.email}/",
+                                        for component in cal.walk():
+                                            if component.name != "VEVENT":
+                                                continue
+                                            try:
+                                                uid = str(component.get("uid", ""))
+                                                title = str(component.get("summary", "Без названия"))
+                                                dtstart = component.get("dtstart").dt
+                                                dtend = component.get("dtend").dt
+                                                tz = pytz.timezone(Config.TZ)
+                                                if not isinstance(dtstart, datetime):
+                                                    dtstart = datetime.combine(dtstart, datetime.min.time())
+                                                if not isinstance(dtend, datetime):
+                                                    dtend = datetime.combine(dtend, datetime.min.time())
+                                                if dtstart.tzinfo is None:
+                                                    dtstart = tz.localize(dtstart)
+                                                else:
+                                                    dtstart = dtstart.astimezone(tz)
+                                                if dtend.tzinfo is None:
+                                                    dtend = tz.localize(dtend)
+                                                else:
+                                                    dtend = dtend.astimezone(tz)
+                                                attendees: List[str] = []
+                                                for att in component.get_all("attendee", []):
+                                                    addr = str(att)
+                                                    if addr.lower().startswith("mailto:"):
+                                                        addr = addr[7:]
+                                                    attendees.append(addr)
+                                                organizer = component.get("organizer")
+                                                organizer_email = ""
+                                                if organizer:
+                                                    organizer_email = str(organizer)
+                                                    if organizer_email.lower().startswith("mailto:"):
+                                                        organizer_email = organizer_email[7:]
+                                                description = str(component.get("description", ""))
+                                                location = str(component.get("location", ""))
+                                                status = str(component.get("status", "CONFIRMED"))
+                                                events.append({
+                                                    "uid": uid,
+                                                    "title": title,
+                                                    "start_time": dtstart.isoformat(),
+                                                    "end_time": dtend.isoformat(),
+                                                    "attendees": attendees,
+                                                    "description": description,
+                                                    "location": location,
+                                                    "organizer": organizer_email,
+                                                    "status": status,
+                                                })
+                                            except Exception as ve_inner:
+                                                if Config.CALDAV_LOG_PARSE_ERRORS:
+                                                    logger.debug(f"Failed VEVENT parse uid={component.get('uid')} err={ve_inner}")
+                                                continue
+                                        block_index += 1
             ]
             # Сокращённый fallback перебор
             for href in candidates:
