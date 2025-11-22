@@ -180,6 +180,20 @@ class CalDAVManager:
             if not end_date:
                 end_date = start_date + timedelta(days=1)
 
+            # Локализуем диапазон к таймзоне конфигурации, чтобы корректно сформировать UTC диапазон.
+            try:
+                tz_localize = pytz.timezone(Config.TZ)
+                if start_date.tzinfo is None:
+                    start_date = tz_localize.localize(start_date)
+                else:
+                    start_date = start_date.astimezone(tz_localize)
+                if end_date.tzinfo is None:
+                    end_date = tz_localize.localize(end_date)
+                else:
+                    end_date = end_date.astimezone(tz_localize)
+            except Exception:
+                pass
+
             session = await self._get_session()
             calendars = await self.get_calendars()
             if not calendars:
@@ -197,24 +211,29 @@ class CalDAVManager:
                 cal_href = cal.get("href")
                 if not cal_href:
                     continue
+                # Нормализуем относительные пути в абсолютный URL
+                if cal_href.startswith('/'):
+                    cal_href_full = self.base_url.rstrip('/') + cal_href
+                else:
+                    cal_href_full = cal_href
                 try:
-                    async with session.request("REPORT", cal_href, data=body, headers=headers) as resp:
+                    async with session.request("REPORT", cal_href_full, data=body, headers=headers) as resp:
                         if resp.status not in (200, 207):
-                            logger.debug(f"CalDAV REPORT failed: {resp.status} for {cal_href}")
+                            logger.debug(f"CalDAV REPORT failed: {resp.status} for {cal_href_full}")
                             continue
                         text = await resp.text()
                         if Config.CALDAV_LOG_FULL_RAW:
-                            logger.info(f"CalDAV REPORT RAW PRIMARY href={cal_href} status={resp.status} len={len(text)}\n{text}")
+                            logger.info(f"CalDAV REPORT RAW PRIMARY href={cal_href_full} status={resp.status} len={len(text)}\n{text}")
                         else:
                             head_primary = text[:400].replace("\n", " ")
                             logger.info(
-                                f"CalDAV REPORT RAW primary href={cal_href} status={resp.status} len={len(text)} head='{head_primary}'"
+                                f"CalDAV REPORT RAW primary href={cal_href_full} status={resp.status} len={len(text)} head='{head_primary}'"
                             )
                     evs = self._parse_events(text)
-                    logger.debug(f"Fetched {len(evs)} events from {cal_href}")
+                    logger.debug(f"Fetched {len(evs)} events from {cal_href_full}")
                     all_events.extend(evs)
                 except Exception as ce:
-                    logger.debug(f"Error fetching events from {cal_href}: {ce}")
+                    logger.debug(f"Error fetching events from {cal_href_full}: {ce}")
 
             # Fallback расширенный диапазон REPORT если ничего не нашли
             if not all_events:
@@ -225,20 +244,24 @@ class CalDAVManager:
                     cal_href = cal.get("href")
                     if not cal_href:
                         continue
+                    if cal_href.startswith('/'):
+                        cal_href_full = self.base_url.rstrip('/') + cal_href
+                    else:
+                        cal_href_full = cal_href
                     try:
-                        async with session.request("REPORT", cal_href, data=body_ext, headers=headers) as resp:
+                        async with session.request("REPORT", cal_href_full, data=body_ext, headers=headers) as resp:
                             if resp.status not in (200, 207):
                                 continue
                             text = await resp.text()
                             if Config.CALDAV_LOG_FULL_RAW:
-                                logger.info(f"CalDAV REPORT RAW FALLBACK href={cal_href} status={resp.status} len={len(text)}\n{text}")
+                                logger.info(f"CalDAV REPORT RAW FALLBACK href={cal_href_full} status={resp.status} len={len(text)}\n{text}")
                             else:
                                 head_fallback = text[:400].replace("\n", " ")
                                 logger.info(
-                                    f"CalDAV REPORT RAW fallback href={cal_href} status={resp.status} len={len(text)} head='{head_fallback}'"
+                                    f"CalDAV REPORT RAW fallback href={cal_href_full} status={resp.status} len={len(text)} head='{head_fallback}'"
                                 )
                         evs = self._parse_events(text)
-                        logger.debug(f"Fallback range fetched {len(evs)} events from {cal_href}")
+                        logger.debug(f"Fallback range fetched {len(evs)} events from {cal_href_full}")
                         all_events.extend(evs)
                     except Exception:
                         continue
