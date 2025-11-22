@@ -174,6 +174,10 @@ async def start_web_server(bot, host: str = "0.0.0.0", port: int = 8080):
     app = web.Application()
     handler = ActionHandler(bot)
     
+    # Совместимость с существующей инфраструктурой:
+    # Mattermost бьёт в публичный URL вида <MM_ACTIONS_URL>/mattermost/actions,
+    # поэтому здесь обрабатываем этот путь напрямую, а '/actions' оставляем как локальный.
+    app.router.add_post('/mattermost/actions', handler.handle_action)
     app.router.add_post('/actions', handler.handle_action)
     app.router.add_get('/health', lambda r: web.json_response({"status": "ok"}))
     
