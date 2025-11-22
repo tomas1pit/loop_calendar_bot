@@ -152,36 +152,45 @@ class Bot:
     async def handle_auth_message(self, user_id: str, channel_id: str, password: str):
         """Обработать ввод пароля при авторизации"""
         user = self.logic.get_user(user_id)
-        
+
         if not user:
-            # Получить email пользователя Mattermost
-            mm_user = self.mm.driver.users.get_user(user_id)
-            email = mm_user.get('email', '')
-            
+            # Попробовать взять email из сохранённого стейта (его кладёт ws_listener._send_auth_prompt)
+            user_state = self.logic.get_user_state(user_id)
+            email = ''
+            if user_state and user_state.data:
+                try:
+                    state_data = json.loads(user_state.data)
+                    email = state_data.get('email', '')
+                except Exception:
+                    email = ''
+
             if not email:
-                await self.mm.send_message(channel_id, 
+                # Фоллбек: берём email из текущего пользователя Mattermost (self.mm.user)
+                email = (self.mm.user or {}).get('email', '')
+
+            if not email:
+                await self.mm.send_message(channel_id,
                     "Не удалось получить ваш email. Пожалуйста, попробуйте позже.")
                 return
-            
+
             # Создать пользователя с новым паролем
-            new_user = self.logic.create_user(user_id, email, password)
+            self.logic.create_user(user_id, email, password)
             logger.info(f"User {user_id} authenticated with email {email}")
-            
+
+            # Очистить состояние авторизации
+            self.logic.clear_user_state(user_id)
+
             # Показать главное меню
             await self.show_main_menu(user_id, channel_id)
     
     async def show_auth_prompt(self, user_id: str, channel_id: str):
         """Показать запрос авторизации"""
         try:
-            mm_user = self.mm.driver.users.get_user(user_id)
-            email = mm_user.get('email', '')
-            
-            message = UIMessages.auth_required(email)
+            # В актуальной логике WS уже отправляет auth prompt и ставит состояние,
+            # поэтому здесь можно просто продублировать сообщение при необходимости.
+            mm_user_email = (self.mm.user or {}).get('email', '')
+            message = UIMessages.auth_required(mm_user_email)
             await self.mm.send_message(channel_id, message)
-            
-            # Установить состояние ожидания пароля
-            self.logic.set_user_state(user_id, "awaiting_password", 
-                                     {"email": email})
         except Exception as e:
             logger.error(f"Error showing auth prompt: {e}")
             await self.mm.send_message(channel_id, "Произошла ошибка. Пожалуйста, попробуйте позже.")
@@ -199,7 +208,7 @@ class Bot:
                     {
                         "name": "Все встречи на сегодня",
                         "integration": {
-                            "url": Config.MM_ACTIONS_URL,
+                            "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
                             "context": {
                                 "action": ButtonActions.TODAY_ALL_MEETINGS,
                                 "user_id": user_id
@@ -209,7 +218,7 @@ class Bot:
                     {
                         "name": "Текущие встречи",
                         "integration": {
-                            "url": Config.MM_ACTIONS_URL,
+                            "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
                             "context": {
                                 "action": ButtonActions.TODAY_CURRENT_MEETINGS,
                                 "user_id": user_id
@@ -219,7 +228,7 @@ class Bot:
                     {
                         "name": "Создать встречу",
                         "integration": {
-                            "url": Config.MM_ACTIONS_URL,
+                            "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
                             "context": {
                                 "action": ButtonActions.CREATE_MEETING,
                                 "user_id": user_id
@@ -229,7 +238,7 @@ class Bot:
                     {
                         "name": "Разлогиниться",
                         "integration": {
-                            "url": Config.MM_ACTIONS_URL,
+                            "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
                             "context": {
                                 "action": ButtonActions.LOGOUT,
                                 "user_id": user_id

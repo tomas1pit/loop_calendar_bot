@@ -160,8 +160,20 @@ class MattermostWebSocketListener:
             
             if f"@{bot_name}" in message_lower or bot_name in message_lower:
                 logger.info(f"✓ Bot @{bot_name} mentioned in message!")
-                # Отправить меню в ответ
-                self._send_menu_reply(user_id, channel_id, post_id)
+
+                # Проверяем, авторизован ли пользователь
+                try:
+                    user = self.bot.logic.get_user(user_id)
+                except Exception as e:
+                    logger.error(f"Error checking user in DB: {e}", exc_info=True)
+                    user = None
+
+                if not user:
+                    logger.info("User is not authorized yet, sending auth prompt instead of menu")
+                    self._send_auth_prompt(user_id)
+                else:
+                    # Пользователь авторизован — отправляем главное меню
+                    self._send_menu_reply(user_id, channel_id, post_id)
             else:
                 logger.info(f"✗ Bot @{bot_name} NOT mentioned (message: {message[:100]})")
         
@@ -188,6 +200,89 @@ class MattermostWebSocketListener:
             except:
                 pass
         logger.info("WebSocket disconnected")
+
+    def _send_auth_prompt(self, user_id: str):
+        """Отправить сообщение с инструкцией по авторизации в личный чат"""
+        try:
+            logger.info(f"Sending auth prompt to user {user_id}")
+
+            from ui_messages import UIMessages
+
+            base_url = Config.MATTERMOST_BASE_URL.rstrip('/')
+            headers = {
+                'Authorization': f'Bearer {Config.MATTERMOST_BOT_TOKEN}',
+                'Content-Type': 'application/json'
+            }
+
+            # Получить email пользователя из Mattermost через HTTP API
+            try:
+                user_resp = requests.get(
+                    f"{base_url}/api/v4/users/{user_id}",
+                    headers=headers,
+                    timeout=10,
+                    verify=False
+                )
+                if user_resp.status_code != 200:
+                    logger.error(f"Failed to get MM user: HTTP {user_resp.status_code}, response: {user_resp.text}")
+                    email = ""
+                else:
+                    email = user_resp.json().get('email', '')
+            except Exception as e:
+                logger.error(f"Error requesting MM user info: {e}", exc_info=True)
+                email = ""
+
+            # Текст по ТЗ
+            try:
+                message_text = UIMessages.auth_required(email)
+            except Exception:
+                # Фоллбек, если UIMessages недоступен
+                message_text = (
+                    "Привет! Для начала надо авторизоваться в календаре.\n\n"
+                    "1) Создайте пароль приложения для почты Mail.ru.\n"
+                    "2) Отправьте мне этот пароль одним сообщением."
+                )
+
+            # Создаем/получаем личный канал
+            channel_resp = requests.post(
+                f"{base_url}/api/v4/channels/direct",
+                headers=headers,
+                json=[user_id],
+                timeout=10,
+                verify=False
+            )
+            if channel_resp.status_code not in [200, 201]:
+                logger.error(f"Failed to get direct channel for auth prompt: HTTP {channel_resp.status_code}, response: {channel_resp.text}")
+                return
+
+            dm_channel = channel_resp.json()
+            dm_channel_id = dm_channel.get('id')
+
+            post_data = {
+                'channel_id': dm_channel_id,
+                'message': message_text
+            }
+
+            resp = requests.post(
+                f"{base_url}/api/v4/posts",
+                headers=headers,
+                json=post_data,
+                timeout=10,
+                verify=False
+            )
+
+            if resp.status_code == 201:
+                logger.info("Auth prompt sent successfully to direct channel")
+            else:
+                logger.error(f"Failed to send auth prompt: HTTP {resp.status_code}, response: {resp.text}")
+
+            # Зафиксировать состояние пользователя как ожидающего пароль
+            try:
+                self.bot.logic.set_user_state(user_id, "awaiting_password", {"email": email})
+            except Exception as e:
+                logger.error(f"Failed to set user state awaiting_password: {e}", exc_info=True)
+
+        except Exception as e:
+            logger.error(f"Error in _send_auth_prompt: {e}", exc_info=True)
     
     def _send_menu_reply(self, user_id: str, channel_id: str, root_id: str):
         """Отправить главное меню в ответ на упоминание (в личный чат)"""
