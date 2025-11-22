@@ -2,7 +2,6 @@ import threading
 import json
 import logging
 import time
-import socket
 from websocket import create_connection, WebSocketConnectionClosedException
 from config import Config
 
@@ -15,13 +14,14 @@ class MattermostWebSocketListener:
         self.ws = None
         self.running = False
         self.thread = None
-        self.reconnect_delay = 5
+        self.reconnect_delay = 3
         self.seq = 1
     
     def connect(self):
         """Подключиться к WebSocket Mattermost (синхронно в отдельном потоке)"""
         self.thread = threading.Thread(target=self._connect_loop, daemon=True)
         self.thread.start()
+        logger.info("WebSocket listener thread started")
     
     def _connect_loop(self):
         """Основной цикл подключения с переподключением"""
@@ -35,25 +35,12 @@ class MattermostWebSocketListener:
                 
                 logger.info(f"Connecting to WebSocket: {ws_url}")
                 
+                # Создать соединение БЕЗ timeout при подключении
                 self.ws = create_connection(ws_url)
-                self.ws.settimeout(10)
                 
                 logger.info("WebSocket connection established")
                 
-                # Сначала получить приветствие (hello) от сервера
-                try:
-                    hello_response = self.ws.recv()
-                    if hello_response:
-                        hello_data = json.loads(hello_response)
-                        logger.debug(f"Received hello: {hello_data.get('event', 'unknown')}")
-                except Exception as e:
-                    logger.error(f"Failed to receive hello: {e}")
-                    if self.ws:
-                        self.ws.close()
-                    time.sleep(self.reconnect_delay)
-                    continue
-                
-                # Отправить токен аутентификации
+                # Отправить аутентификацию СРАЗУ (до получения hello)
                 auth_msg = {
                     "seq": self.seq,
                     "action": "authentication_challenge",
@@ -63,42 +50,11 @@ class MattermostWebSocketListener:
                 }
                 self.seq += 1
                 
-                try:
-                    self.ws.send(json.dumps(auth_msg))
-                    logger.debug("Sent auth message")
-                except Exception as e:
-                    logger.error(f"Failed to send auth message: {e}")
-                    if self.ws:
-                        self.ws.close()
-                    time.sleep(self.reconnect_delay)
-                    continue
+                self.ws.send(json.dumps(auth_msg))
+                logger.debug("Sent authentication message")
                 
-                # Получить ответ на аутентификацию
-                auth_ok = False
-                try:
-                    response = self.ws.recv()
-                    if response:
-                        auth_response = json.loads(response)
-                        logger.debug(f"Auth response event: {auth_response.get('event')}, status: {auth_response.get('status')}")
-                        
-                        # Проверяем статус аутентификации - может быть в разных полях
-                        status = auth_response.get('status') or (auth_response.get('data', {}).get('status') if isinstance(auth_response.get('data'), dict) else None)
-                        
-                        if status == 'OK' or auth_response.get('event') == 'authenticated':
-                            logger.info("WebSocket authenticated successfully")
-                            auth_ok = True
-                        else:
-                            logger.error(f"Authentication failed: {auth_response}")
-                except Exception as e:
-                    logger.error(f"Failed to receive auth response: {e}")
-                
-                if auth_ok:
-                    # Запустить цикл слушания
-                    self._listen()
-                else:
-                    if self.ws:
-                        self.ws.close()
-                    time.sleep(self.reconnect_delay)
+                # Теперь запустить цикл слушания
+                self._listen()
             
             except WebSocketConnectionClosedException:
                 logger.warning(f"WebSocket connection closed. Reconnecting in {self.reconnect_delay} seconds...")
@@ -115,7 +71,7 @@ class MattermostWebSocketListener:
         try:
             while self.running and self.ws:
                 try:
-                    # Получить сообщение с timeout
+                    # Получить сообщение БЕЗ timeout (блокирующий вызов)
                     message = self.ws.recv()
                     
                     if not message:
@@ -128,20 +84,20 @@ class MattermostWebSocketListener:
                         continue
                     
                     event_type = data.get('event')
-                    logger.debug(f"Received event: {event_type}")
                     
                     if event_type == "posted":
+                        logger.debug(f"Posted event received")
                         self.handle_posted(data)
                     elif event_type == "status_change":
+                        logger.debug(f"Status change event received")
                         self.handle_status_change(data)
-                    elif event_type == "hello":
-                        # Периодический hello от сервера, игнорируем
-                        logger.debug("Received periodic hello")
+                    else:
+                        # Игнорируем другие события (hello, auth_ok, и т.д.)
+                        logger.debug(f"Received event: {event_type}")
                 
-                except socket.timeout:
-                    # Таймаут - это нормально, просто продолжаем
-                    logger.debug("Socket timeout, continuing...")
-                    continue
+                except WebSocketConnectionClosedException:
+                    logger.info("WebSocket connection closed during listen")
+                    break
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
                     break
@@ -161,7 +117,11 @@ class MattermostWebSocketListener:
         """Обработать событие posted (новое сообщение)"""
         try:
             broadcast = data.get('broadcast', {})
-            post = json.loads(broadcast.get('post', '{}')) if isinstance(broadcast.get('post'), str) else broadcast.get('post', {})
+            post = broadcast.get('post')
+            
+            # post может быть JSON строкой или объектом
+            if isinstance(post, str):
+                post = json.loads(post)
             
             if not post:
                 return
@@ -170,11 +130,9 @@ class MattermostWebSocketListener:
             user_id = post.get('user_id', '')
             channel_id = post.get('channel_id', '')
             
-            logger.debug(f"Posted event: user={user_id}, channel={channel_id}, message={message[:50]}")
+            logger.debug(f"Posted: user={user_id}, channel={channel_id}, message={message[:50] if message else 'empty'}")
             
-            # Проверить, упоминается ли бот
-            if f"@{Config.BOT_NAME}" in message:
-                logger.info(f"Bot mentioned by {user_id} in channel {channel_id}")
+            # TODO: Обработать сообщение от бота (если нужно)
         
         except Exception as e:
             logger.error(f"Error handling posted event: {e}")
@@ -183,7 +141,9 @@ class MattermostWebSocketListener:
         """Обработать изменение статуса"""
         try:
             broadcast = data.get('broadcast', {})
-            logger.debug(f"Status change event: {broadcast}")
+            logger.debug(f"Status change: {broadcast}")
+            
+            # TODO: Обработать изменение статуса (если нужно)
         
         except Exception as e:
             logger.error(f"Error handling status change: {e}")
