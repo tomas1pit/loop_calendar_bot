@@ -72,6 +72,7 @@ class CalDAVManager:
 
             calendars: List[Dict[str, str]] = []
             headers = {"Depth": "1"}
+            calendars_root_href = None
             try:
                 async with session.request("PROPFIND", self.principal_url, headers=headers) as resp:
                     text = await resp.text()
@@ -102,12 +103,58 @@ class CalDAVManager:
                                 if rtype is not None and rtype.find("c:calendar", ns) is not None:
                                     is_calendar = True
                                 logger.info(f"PROPFIND item href='{href}' displayname='{displayname}' is_calendar={is_calendar}")
+                                # Запоминаем корневую директорию календарей пользователя
+                                if href.endswith('/calendars/'):
+                                    calendars_root_href = href
                                 if is_calendar and href:
                                     calendars.append({"href": href if href.endswith('/') else href + '/', "name": displayname or "Calendar"})
                         except Exception as e:
                             logger.info(f"Failed to parse principal PROPFIND XML: {e}")
             except Exception as e:
                 logger.info(f"Error during principal PROPFIND: {e}")
+
+            # Если нашли корневой каталог calendars, делаем второй проход Depth=1
+            if calendars_root_href and not calendars:
+                # Собираем абсолютный URL если ответ был относительным
+                if calendars_root_href.startswith('/'):
+                    calendars_root_url = self.base_url.rstrip('/') + calendars_root_href
+                else:
+                    calendars_root_url = calendars_root_href
+                logger.info(f"Enumerating user calendars via Depth=1 on {calendars_root_url}")
+                try:
+                    async with session.request("PROPFIND", calendars_root_url, headers={"Depth": "1"}) as resp2:
+                        text2 = await resp2.text()
+                        status2 = resp2.status
+                        snippet2 = text2[:400].replace('\n',' ')
+                        logger.info(f"Calendars collection PROPFIND status={status2} body[0:200]='{snippet2[:200]}'")
+                        if status2 in (200,207):
+                            from xml.etree import ElementTree as ET
+                            ns = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav"}
+                            try:
+                                root2 = ET.fromstring(text2)
+                                for response in root2.findall("d:response", ns):
+                                    href_el = response.find("d:href", ns)
+                                    propstat = response.find("d:propstat", ns)
+                                    if href_el is None or propstat is None:
+                                        continue
+                                    prop = propstat.find("d:prop", ns)
+                                    if prop is None:
+                                        continue
+                                    rtype = prop.find("d:resourcetype", ns)
+                                    displayname_el = prop.find("d:displayname", ns)
+                                    displayname = displayname_el.text.strip() if displayname_el is not None and displayname_el.text else ""
+                                    href_child = href_el.text.strip() if href_el.text else ""
+                                    is_calendar = rtype is not None and rtype.find("c:calendar", ns) is not None
+                                    logger.info(f"Calendars Depth=1 item href='{href_child}' displayname='{displayname}' is_calendar={is_calendar}")
+                                    if is_calendar and href_child != calendars_root_href:
+                                        full_child_href = href_child if href_child.endswith('/') else href_child + '/'
+                                        if full_child_href.startswith('/'):
+                                            full_child_href = self.base_url.rstrip('/') + full_child_href
+                                        calendars.append({"href": full_child_href, "name": displayname or "Calendar"})
+                            except Exception as e:
+                                logger.info(f"Failed to parse calendars collection XML: {e}")
+                except Exception as e:
+                    logger.info(f"Error during calendars root enumeration: {e}")
 
             # Приоритизируем Main / Основной
             preferred = []
