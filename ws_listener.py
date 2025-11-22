@@ -354,7 +354,7 @@ class MattermostWebSocketListener:
                             "integration": {
                                 "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
                                 "context": {
-                                    "action": "show_today_all_meetings",
+                                    "action": "today_all_meetings",
                                     "user_id": user_id
                                 }
                             }
@@ -366,7 +366,7 @@ class MattermostWebSocketListener:
                             "integration": {
                                 "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
                                 "context": {
-                                    "action": "show_today_current_meetings",
+                                    "action": "today_current_meetings",
                                     "user_id": user_id
                                 }
                             }
