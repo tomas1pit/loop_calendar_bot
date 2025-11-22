@@ -27,8 +27,10 @@ class CalDAVManager:
     def _build_principal_url(self, email: str) -> str:
         """Построить URL principal для Mail.ru CalDAV"""
         try:
-            domain, username = email.split("@")
-            return f"{self.base_url}{Config.CALDAV_PRINCIPAL_PATH}{domain}/{username}/"
+            username, domain = email.split("@")
+            principal = f"{self.base_url}{Config.CALDAV_PRINCIPAL_PATH}{domain}/{username}/"
+            logger.info(f"CalDAV principal URL built: {principal}")
+            return principal
         except:
             return f"{self.base_url}{Config.CALDAV_PRINCIPAL_PATH}"
     
@@ -76,9 +78,9 @@ class CalDAVManager:
                     status = resp.status
                     # Логируем статус и первые 500 символов ответа (если очень длинный)
                     snippet = text[:500].replace('\n', ' ')
-                    logger.debug(f"Principal PROPFIND status={status} url={self.principal_url} body[0:500]='{snippet}'")
+                    logger.info(f"Principal PROPFIND status={status} url={self.principal_url} body[0:200]='{snippet[:200]}'")
                     if status not in (200, 207):
-                        logger.debug(f"Principal PROPFIND failed: {status} {self.principal_url}")
+                        logger.info(f"Principal PROPFIND failed: {status} {self.principal_url}")
                     else:
                         from xml.etree import ElementTree as ET
                         ns = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav"}
@@ -99,13 +101,13 @@ class CalDAVManager:
                                 is_calendar = False
                                 if rtype is not None and rtype.find("c:calendar", ns) is not None:
                                     is_calendar = True
-                                logger.debug(f"PROPFIND item href='{href}' displayname='{displayname}' is_calendar={is_calendar}")
+                                logger.info(f"PROPFIND item href='{href}' displayname='{displayname}' is_calendar={is_calendar}")
                                 if is_calendar and href:
                                     calendars.append({"href": href if href.endswith('/') else href + '/', "name": displayname or "Calendar"})
                         except Exception as e:
-                            logger.debug(f"Failed to parse principal PROPFIND XML: {e}")
+                            logger.info(f"Failed to parse principal PROPFIND XML: {e}")
             except Exception as e:
-                logger.debug(f"Error during principal PROPFIND: {e}")
+                logger.info(f"Error during principal PROPFIND: {e}")
 
             # Приоритизируем Main / Основной
             preferred = []
@@ -131,6 +133,7 @@ class CalDAVManager:
                 f"{self.base_url}/dav/{self.email}/",
                 f"{self.base_url}/calendars/{self.email}/",
             ]
+            logger.info(f"CalDAV fallback candidates: {candidates}")
             for href in candidates:
                 try:
                     async with session.request("PROPFIND", href, headers={"Depth": "0"}) as resp:
@@ -138,12 +141,12 @@ class CalDAVManager:
                         snippet = body[:300].replace('\n',' ')
                         if resp.status in (200, 207):
                             logger.info(f"CalDAV fallback calendar path detected: {href}")
-                            logger.debug(f"Fallback PROPFIND status={resp.status} body[0:300]='{snippet}'")
+                            logger.info(f"Fallback PROPFIND status={resp.status} body[0:150]='{snippet[:150]}'")
                             return [{"href": href, "name": "Calendar"}]
                         else:
-                            logger.debug(f"CalDAV fallback probe failed: {href} -> {resp.status} body[0:200]='{snippet[:200]}'")
+                            logger.info(f"CalDAV fallback probe failed: {href} -> {resp.status} body[0:120]='{snippet[:120]}'")
                 except Exception as e:
-                    logger.debug(f"CalDAV fallback probe error {href}: {e}")
+                    logger.info(f"CalDAV fallback probe error {href}: {e}")
 
             logger.error("No CalDAV calendar path found after enumeration and fallback probes")
             return []
