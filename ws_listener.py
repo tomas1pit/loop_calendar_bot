@@ -188,16 +188,14 @@ class MattermostWebSocketListener:
             if user_state and user_state.state:
                 logger.info(f"User {user_id} has active state '{user_state.state}', passing message to dialog handler")
                 try:
-                    # Вызываем асинхронный обработчик из sync-потока через asyncio.run
                     import asyncio
-                    asyncio.run(self.bot.handle_dialog_step(user_id, channel_id, user_state, message))
-                except RuntimeError:
-                    # Если цикл уже запущен (например, в том же процессе), используем create_task
-                    try:
-                        loop = asyncio.get_event_loop()
-                        loop.create_task(self.bot.handle_dialog_step(user_id, channel_id, user_state, message))
-                    except Exception as e:
-                        logger.error(f"Failed to schedule dialog handler task: {e}", exc_info=True)
+                    # Всегда отправляем задачу в уже существующий event loop
+                    loop = asyncio.get_event_loop()
+                    loop.call_soon_threadsafe(
+                        lambda: asyncio.create_task(
+                            self.bot.handle_dialog_step(user_id, channel_id, user_state, message)
+                        )
+                    )
                 return
 
             logger.info(f"✗ Bot @{bot_name} NOT mentioned and no active state (message: {message[:100]})")
