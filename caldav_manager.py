@@ -222,13 +222,8 @@ class CalDAVManager:
                             logger.debug(f"CalDAV REPORT failed: {resp.status} for {cal_href_full}")
                             continue
                         text = await resp.text()
-                        if Config.CALDAV_LOG_FULL_RAW:
-                            logger.info(f"CalDAV REPORT RAW PRIMARY href={cal_href_full} status={resp.status} len={len(text)}\n{text}")
-                        else:
-                            head_primary = text[:400].replace("\n", " ")
-                            logger.info(
-                                f"CalDAV REPORT RAW primary href={cal_href_full} status={resp.status} len={len(text)} head='{head_primary}'"
-                            )
+                        # Сокращенный лог только статуса запроса
+                        logger.info(f"CalDAV REPORT primary status={resp.status} href={cal_href_full} len={len(text)}")
                     evs = self._parse_events(text)
                     logger.debug(f"Fetched {len(evs)} events from {cal_href_full}")
                     all_events.extend(evs)
@@ -253,13 +248,7 @@ class CalDAVManager:
                             if resp.status not in (200, 207):
                                 continue
                             text = await resp.text()
-                            if Config.CALDAV_LOG_FULL_RAW:
-                                logger.info(f"CalDAV REPORT RAW FALLBACK href={cal_href_full} status={resp.status} len={len(text)}\n{text}")
-                            else:
-                                head_fallback = text[:400].replace("\n", " ")
-                                logger.info(
-                                    f"CalDAV REPORT RAW fallback href={cal_href_full} status={resp.status} len={len(text)} head='{head_fallback}'"
-                                )
+                            logger.info(f"CalDAV REPORT fallback status={resp.status} href={cal_href_full} len={len(text)}")
                         evs = self._parse_events(text)
                         logger.debug(f"Fallback range fetched {len(evs)} events from {cal_href_full}")
                         all_events.extend(evs)
@@ -477,11 +466,7 @@ class CalDAVManager:
                     except Exception:
                         raw_ical = caldata_el.text or ''
                     raw_ical = raw_ical.strip()
-                    try:
-                        head_preview = raw_ical[:160].replace('\n', ' ').replace('\r', ' ')
-                        logger.debug(f"Calendar-data block {block_index} raw head='{head_preview}' len={len(raw_ical)}")
-                    except Exception:
-                        pass
+                    # Убрали подробное превью для снижения шума
                     cleaned = ''.join(ch for ch in raw_ical if ch in ('\n','\r') or ord(ch) >= 32)
                     ical_blocks.append(cleaned)
                     parse_source = cleaned
@@ -514,12 +499,7 @@ class CalDAVManager:
                             dtstart = raw_dtstart.dt if raw_dtstart else None
                             dtend = raw_dtend.dt if raw_dtend else None
                             # Debug raw values + tzinfo
-                            try:
-                                logger.debug(
-                                    f"VEVENT raw uid={uid} dtstart_repr={repr(raw_dtstart)} dtend_repr={repr(raw_dtend)} parsed_start={dtstart} parsed_end={dtend} tzstart={getattr(dtstart,'tzinfo',None)} tzend={getattr(dtend,'tzinfo',None)}"
-                                )
-                            except Exception:
-                                pass
+                            # Минимальный лог на случай разбора — отключен для снижения шума
                             tz = pytz.timezone(Config.TZ)
                             if not isinstance(dtstart, datetime):
                                 dtstart = datetime.combine(dtstart, datetime.min.time())
@@ -559,10 +539,7 @@ class CalDAVManager:
                                 "organizer": organizer_email,
                                 "status": status,
                             })
-                            try:
-                                logger.debug(f"Appended event uid={uid} start={dtstart.isoformat()} end={dtend.isoformat()} attendees={len(attendees)}")
-                            except Exception:
-                                pass
+                            # Без подробного лога добавления события
                         except Exception as ve_inner:
                             if Config.CALDAV_LOG_PARSE_ERRORS:
                                 logger.debug(f"Failed VEVENT parse uid={component.get('uid')} err={ve_inner}")

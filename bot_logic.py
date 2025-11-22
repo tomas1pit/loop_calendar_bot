@@ -183,12 +183,25 @@ class BotLogic:
         """Форматировать встречи в таблицу"""
         if not meetings:
             return "Встреч не найдено"
-        
+        status_map = {
+            "ACCEPTED": "✅",
+            "DECLINED": "❌",
+            "TENTATIVE": "❓",
+            "NEEDS-ACTION": "⏳",
+            "CONFIRMED": "✅",
+            "CANCELLED": "🚫",
+            # Русские варианты на случай локализации
+            "ПРИНЯТО": "✅",
+            "ОТКЛОНЕНО": "❌",
+            "ВОЗМОЖНО": "❓",
+            "ОЖИДАЕТ ДЕЙСТВИЯ": "⏳",
+        }
         table = "| Встреча | Время | Статус |\n|---------|-------|--------|\n"
         for meeting in meetings:
             title = meeting.get('title', 'Без названия')
             time_str = meeting.get('time', '')
-            status = meeting.get('status', 'ACCEPTED')
+            raw_status = (meeting.get('status', 'ACCEPTED') or '').strip().upper()
+            status = status_map.get(raw_status, raw_status or '—')
             table += f"| {title} | {time_str} | {status} |\n"
         
         return table

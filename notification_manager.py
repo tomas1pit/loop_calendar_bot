@@ -27,6 +27,8 @@ class NotificationManager:
         Возвращает количество отправленных уведомлений
         """
         notification_count = 0
+        now_global = datetime.now(self.tz)
+        second_ok = (now_global.second == 0)
         
         for user in users:
             try:
@@ -50,29 +52,30 @@ class NotificationManager:
                 # Получить кэшированные события
                 cached_events = self._get_cached_events(user.mattermost_id, today, tomorrow_end)
                 
-                # Найти добавленные события
-                for event in current_events:
-                    if not self._is_event_cached(event, cached_events):
-                        # Новое событие
-                        if self._is_today_or_tomorrow(event, today):
-                            await self._notify_new_meeting(user, event)
-                            notification_count += 1
+                # Найти добавленные события (только в 00 секунд)
+                if second_ok:
+                    for event in current_events:
+                        if not self._is_event_cached(event, cached_events):
+                            if self._is_today_or_tomorrow(event, today):
+                                await self._notify_new_meeting(user, event)
+                                notification_count += 1
                 
-                # Найти удаленные или отмененные события
-                for cached in cached_events:
-                    if cached.status != "CANCELLED" and not self._is_event_in_current(cached, current_events):
-                        # Событие было отменено или удалено
-                        if self._is_today_or_tomorrow_from_cache(cached, today):
-                            await self._notify_cancelled_meeting(user, cached)
-                            notification_count += 1
+                # Найти удаленные или отмененные события (только в 00 секунд)
+                if second_ok:
+                    for cached in cached_events:
+                        if cached.status != "CANCELLED" and not self._is_event_in_current(cached, current_events):
+                            if self._is_today_or_tomorrow_from_cache(cached, today):
+                                await self._notify_cancelled_meeting(user, cached)
+                                notification_count += 1
                 
-                # Найти перенесенные события
-                for cached in cached_events:
-                    current_version = self._find_event_by_uid(cached.uid, current_events)
-                    if current_version and self._event_changed_time(cached, current_version):
-                        if self._is_today_or_tomorrow(current_version, today):
-                            await self._notify_rescheduled_meeting(user, cached, current_version)
-                            notification_count += 1
+                # Найти перенесенные события (только в 00 секунд)
+                if second_ok:
+                    for cached in cached_events:
+                        current_version = self._find_event_by_uid(cached.uid, current_events)
+                        if current_version and self._event_changed_time(cached, current_version):
+                            if self._is_today_or_tomorrow(current_version, today):
+                                await self._notify_rescheduled_meeting(user, cached, current_version)
+                                notification_count += 1
                 
                 # Обновить кэш
                 self._update_events_cache(user.mattermost_id, current_events)
@@ -210,12 +213,13 @@ class NotificationManager:
             now = datetime.now(self.tz)
             reminder_delta = timedelta(minutes=Config.REMINDER_MINUTES)
             
+            now_second_ok = (now.second == 0)
             for event in events:
                 start_time = datetime.fromisoformat(event.get('start_time', ''))
-                time_until = start_time - now
-                
-                # Проверить, является ли это нашим временем напоминания
-                if timedelta(0) <= time_until <= reminder_delta:
+                time_until_sec = int((start_time - now).total_seconds())
+                # Триггер: ровно за Config.REMINDER_MINUTES минут и в 00 секунд
+                target_seconds = Config.REMINDER_MINUTES * 60
+                if time_until_sec == target_seconds and now_second_ok:
                     message = UIMessages.reminder_notification(
                         event.get('title', ''),
                         start_time,
