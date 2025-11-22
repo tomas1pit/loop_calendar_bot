@@ -101,14 +101,74 @@ class BotLogic:
     def get_today_meetings(self, mattermost_id: str, user_email: str, 
                           password: str) -> List[Dict]:
         """Получить все встречи на сегодня"""
-        # Здесь будет интеграция с CalDAV
-        # На данный момент возвращаем пустой список
-        return []
+        tz_now = datetime.now(self.tz)
+        start = tz_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+
+        caldav = CalDAVManager(user_email, password)
+        try:
+            # В текущей версии CalDAVManager.get_events возвращает пустой список,
+            # но контракт уже совместим: список словарей с ISO-датами.
+            # Когда в CalDAVManager появится реальная реализация, эта обвязка
+            # начнёт работать без изменений.
+            events = asyncio.get_event_loop().run_until_complete(
+                caldav.get_events(start, end)
+            )
+        finally:
+            try:
+                asyncio.get_event_loop().run_until_complete(caldav.close())
+            except RuntimeError:
+                # Если нет активного цикла (например, вызов из отдельного треда),
+                # просто пропускаем закрытие — сессия будет собрана GC.
+                pass
+
+        # Нормализуем формат для UI/уведомлений
+        normalized: List[Dict] = []
+        for ev in events:
+            try:
+                title = ev.get("title") or "Без названия"
+                start_iso = ev.get("start_time") or ""
+                end_iso = ev.get("end_time") or ""
+                start_dt = datetime.fromisoformat(start_iso) if start_iso else tz_now
+                end_dt = datetime.fromisoformat(end_iso) if end_iso else start_dt
+
+                # Время в человекочитаемом виде для таблицы
+                time_str = f"{start_dt.strftime('%d.%m %H:%M')}–{end_dt.strftime('%H:%M')}"
+                status = ev.get("status") or "CONFIRMED"
+
+                normalized.append({
+                    "uid": ev.get("uid", ""),
+                    "title": title,
+                    "start_time": start_dt.isoformat(),
+                    "end_time": end_dt.isoformat(),
+                    "time": time_str,
+                    "status": status,
+                    "attendees": ev.get("attendees", []),
+                    "description": ev.get("description", ""),
+                    "location": ev.get("location", ""),
+                    "organizer": ev.get("organizer", ""),
+                })
+            except Exception:
+                continue
+
+        return normalized
     
     def get_current_meetings(self, mattermost_id: str, user_email: str,
                             password: str) -> List[Dict]:
         """Получить текущие и будущие встречи на сегодня"""
-        return []
+        all_today = self.get_today_meetings(mattermost_id, user_email, password)
+        now = datetime.now(self.tz)
+
+        result: List[Dict] = []
+        for m in all_today:
+            try:
+                start_dt = datetime.fromisoformat(m["start_time"])
+                end_dt = datetime.fromisoformat(m["end_time"])
+                if end_dt >= now:
+                    result.append(m)
+            except Exception:
+                continue
+        return result
     
     def format_meetings_table(self, meetings: List[Dict]) -> str:
         """Форматировать встречи в таблицу"""

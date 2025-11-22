@@ -77,8 +77,23 @@ class CalDAVManager:
             if not end_date:
                 end_date = start_date + timedelta(days=1)
             
-            # Упрощенная реализация - возвращаем пустой список
-            # TODO: Полная интеграция с CalDAV
+            # Пока серверная интеграция не реализована полностью, возвращаем пустой
+            # список, чтобы верхний уровень мог работать без ошибок.
+            # Когда будет готов серверный доступ, здесь нужно будет:
+            # 1) Отправлять REPORT-запрос `_build_calendar_query(start_date, end_date)`
+            #    на URL календаря.
+            # 2) Распарсить ответ и вернуть список словарей единого формата:
+            #    {
+            #      "uid": str,
+            #      "title": str,
+            #      "start_time": iso-строка,
+            #      "end_time": iso-строка,
+            #      "attendees": [emails],
+            #      "description": str,
+            #      "location": str,
+            #      "organizer": email,
+            #      "status": str
+            #    }
             return []
         except Exception as e:
             logger.error(f"Error getting events: {e}")
