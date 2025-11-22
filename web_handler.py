@@ -43,9 +43,19 @@ class ActionHandler:
             elif action == "skip_location":
                 await self.skip_location(user_id, channel_id)
             
-            elif action and action.startswith(ButtonActions.SELECT_MEETING):
-                meeting_id = action.replace(ButtonActions.SELECT_MEETING, "")
-                await self.show_meeting_details(user_id, channel_id, meeting_id)
+            elif action == ButtonActions.SELECT_MEETING:
+                # meeting_id приходит как selected_option.value
+                meeting_id = (context.get("selected_option") or {}).get("value")
+                if not meeting_id:
+                    # Может прийти в корне data
+                    data_ctx = data.get("data", {}) or {}
+                    sel = data_ctx.get("selected_option")
+                    if isinstance(sel, dict):
+                        meeting_id = sel.get("value")
+                    elif isinstance(sel, str):
+                        meeting_id = sel
+                if meeting_id:
+                    await self.show_meeting_details(user_id, channel_id, meeting_id)
             
             return web.json_response({"status": "ok"})
         
@@ -62,17 +72,50 @@ class ActionHandler:
                 return
             
             # Получить встречи
-            meetings = self.bot.logic.get_today_meetings(user_id, user.email, 
-                                                         self.bot.logic.encryption.decrypt(user.encrypted_password))
-            
-            # Форматировать таблицу
-            message = "**Все встречи на сегодня**\n\n"
-            message += self.bot.logic.format_meetings_table(meetings)
-            
-            # Показать выпадающее меню для выбора встречи
+            meetings = self.bot.logic.get_today_meetings(
+                user_id,
+                user.email,
+                self.bot.logic.encryption.decrypt(user.encrypted_password),
+            )
+
+            # Таблица по ТЗ: название | когда | статус
+            table = self.bot.logic.format_meetings_table(meetings)
+            message = "**Все встречи на сегодня**\n\n" + table
+
+            props = None
             if meetings:
-                await self.bot.mm.send_message(channel_id, message)
-                # TODO: Добавить интерактивное меню выбора встречи
+                # Выпадающий список выбора встречи
+                options = []
+                for m in meetings:
+                    uid = m.get("uid")
+                    title = m.get("title", "Без названия")
+                    if not uid:
+                        continue
+                    options.append({
+                        "text": title,
+                        "value": uid,
+                    })
+
+                if options:
+                    attachments = [{
+                        "text": "Откройте детали встречи:",
+                        "actions": [{
+                            "id": "selectMeeting",
+                            "name": "Выберите встречу",
+                            "type": "select",
+                            "options": options,
+                            "integration": {
+                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                                "context": {
+                                    "action": ButtonActions.SELECT_MEETING,
+                                    "user_id": user_id,
+                                },
+                            },
+                        }],
+                    }]
+                    props = {"attachments": attachments}
+
+            await self.bot.mm.send_message(channel_id, message, props=props)
         
         except Exception as e:
             logger.error(f"Error showing today meetings: {e}")
@@ -87,14 +130,48 @@ class ActionHandler:
                 return
             
             # Получить встречи
-            meetings = self.bot.logic.get_current_meetings(user_id, user.email,
-                                                          self.bot.logic.encryption.decrypt(user.encrypted_password))
-            
-            # Форматировать таблицу
-            message = "**Текущие и будущие встречи на сегодня**\n\n"
-            message += self.bot.logic.format_meetings_table(meetings)
-            
-            await self.bot.mm.send_message(channel_id, message)
+            meetings = self.bot.logic.get_current_meetings(
+                user_id,
+                user.email,
+                self.bot.logic.encryption.decrypt(user.encrypted_password),
+            )
+
+            table = self.bot.logic.format_meetings_table(meetings)
+            message = "**Текущие и будущие встречи на сегодня**\n\n" + table
+
+            props = None
+            if meetings:
+                options = []
+                for m in meetings:
+                    uid = m.get("uid")
+                    title = m.get("title", "Без названия")
+                    if not uid:
+                        continue
+                    options.append({
+                        "text": title,
+                        "value": uid,
+                    })
+
+                if options:
+                    attachments = [{
+                        "text": "Откройте детали встречи:",
+                        "actions": [{
+                            "id": "selectMeetingCurrent",
+                            "name": "Выберите встречу",
+                            "type": "select",
+                            "options": options,
+                            "integration": {
+                                "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                                "context": {
+                                    "action": ButtonActions.SELECT_MEETING,
+                                    "user_id": user_id,
+                                },
+                            },
+                        }],
+                    }]
+                    props = {"attachments": attachments}
+
+            await self.bot.mm.send_message(channel_id, message, props=props)
         
         except Exception as e:
             logger.error(f"Error showing current meetings: {e}")
@@ -161,8 +238,48 @@ class ActionHandler:
     async def show_meeting_details(self, user_id: str, channel_id: str, meeting_id: str):
         """Показать детали встречи"""
         try:
-            # TODO: Получить детали встречи по ID
-            pass
+            user = self.bot.logic.get_user(user_id)
+            if not user:
+                await self.bot.mm.send_message(channel_id, "Пожалуйста, авторизуйтесь сначала")
+                return
+
+            # Берём все встречи на сегодня и ищем нужную по uid
+            meetings = self.bot.logic.get_today_meetings(
+                user_id,
+                user.email,
+                self.bot.logic.encryption.decrypt(user.encrypted_password),
+            )
+            meeting = None
+            for m in meetings:
+                if m.get("uid") == meeting_id:
+                    meeting = m
+                    break
+
+            if not meeting:
+                await self.bot.mm.send_message(channel_id, "Не удалось найти эту встречу")
+                return
+
+            from ui_messages import UIMessages
+            from datetime import datetime
+
+            start_dt = datetime.fromisoformat(meeting["start_time"])
+            end_dt = datetime.fromisoformat(meeting["end_time"])
+            attendees = meeting.get("attendees", [])
+            description = meeting.get("description", "")
+            location = meeting.get("location", "")
+            status = meeting.get("status", "ACCEPTED")
+
+            message = UIMessages.meeting_details(
+                meeting.get("title", "Без названия"),
+                start_dt,
+                end_dt,
+                attendees,
+                description,
+                location,
+                status,
+            )
+
+            await self.bot.mm.send_message(channel_id, message)
         
         except Exception as e:
             logger.error(f"Error showing meeting details: {e}")
