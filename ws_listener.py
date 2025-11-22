@@ -35,6 +35,9 @@ class MattermostWebSocketListener:
                 logger.info(f"Connecting to WebSocket: {ws_url}")
                 
                 self.ws = create_connection(ws_url)
+                self.ws.settimeout(10)
+                
+                logger.info("WebSocket connection established")
                 
                 # Отправить токен аутентификации
                 auth_msg = {
@@ -61,6 +64,8 @@ class MattermostWebSocketListener:
                         self._listen()
                     else:
                         logger.error(f"Authentication failed: {auth_response}")
+                        if self.ws:
+                            self.ws.close()
                         time.sleep(self.reconnect_delay)
             
             except WebSocketConnectionClosedException:
@@ -79,7 +84,6 @@ class MattermostWebSocketListener:
             while self.running and self.ws:
                 try:
                     # Получить сообщение с timeout
-                    self.ws.settimeout(10)
                     message = self.ws.recv()
                     
                     if not message:
@@ -113,44 +117,7 @@ class MattermostWebSocketListener:
                     pass
             self.ws = None
     
-    async def listen(self):
-        """Слушать события от WebSocket"""
-        try:
-            while self.running and self.ws:
-                try:
-                    message = await self.ws.recv()
-                    
-                    if not message:
-                        continue
-                    
-                    try:
-                        data = json.loads(message)
-                    except json.JSONDecodeError:
-                        logger.debug(f"Invalid JSON received: {message}")
-                        continue
-                    
-                    event_type = data.get('event')
-                    
-                    if event_type == "posted":
-                        await self.handle_posted(data)
-                    elif event_type == "status_change":
-                        await self.handle_status_change(data)
-                
-                except exceptions.ConnectionClosed:
-                    logger.info("WebSocket connection closed by server")
-                    break
-                
-                except Exception as e:
-                    logger.error(f"Error processing message: {e}")
-                    break
-        
-        except Exception as e:
-            logger.error(f"Error in WebSocket listen: {e}")
-        
-        finally:
-            self.ws = None
-    
-    async def handle_posted(self, data: dict):
+    def handle_posted(self, data: dict):
         """Обработать событие posted (новое сообщение)"""
         try:
             broadcast = data.get('broadcast', {})
@@ -163,32 +130,30 @@ class MattermostWebSocketListener:
             user_id = post.get('user_id', '')
             channel_id = post.get('channel_id', '')
             
+            logger.debug(f"Posted event: user={user_id}, channel={channel_id}, message={message[:50]}")
+            
             # Проверить, упоминается ли бот
             if f"@{Config.BOT_NAME}" in message:
                 logger.info(f"Bot mentioned by {user_id} in channel {channel_id}")
-                
-                # Обработать сообщение
-                await self.bot.handle_message(user_id, message, channel_id)
         
         except Exception as e:
             logger.error(f"Error handling posted event: {e}")
     
-    async def handle_status_change(self, data: dict):
+    def handle_status_change(self, data: dict):
         """Обработать изменение статуса"""
         try:
             broadcast = data.get('broadcast', {})
-            # TODO: Обработать изменения статусов встреч
-            pass
+            logger.debug(f"Status change event: {broadcast}")
         
         except Exception as e:
             logger.error(f"Error handling status change: {e}")
     
-    async def disconnect(self):
+    def disconnect(self):
         """Отключиться от WebSocket"""
         self.running = False
         if self.ws:
             try:
-                await self.ws.close()
+                self.ws.close()
             except:
                 pass
         logger.info("WebSocket disconnected")
