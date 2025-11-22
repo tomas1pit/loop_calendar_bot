@@ -79,6 +79,9 @@ class MattermostWebSocketListener:
                         await self.handle_posted(data)
                     elif event_type == "status_change":
                         await self.handle_status_change(data)
+                
+                except Exception as e:
+                    logger.error(f"Error processing message: {e}")
         
         except Exception as e:
             logger.error(f"Error in WebSocket listen: {e}")
