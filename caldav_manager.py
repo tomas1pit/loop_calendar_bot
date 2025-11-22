@@ -470,7 +470,17 @@ class CalDAVManager:
                             break
                     if caldata_el is None:
                         continue
-                    raw_ical = (caldata_el.text or "").strip()
+                    # Извлекаем полный текст calendar-data, включая возможные дополнительные text nodes
+                    try:
+                        raw_ical = ''.join(caldata_el.itertext())
+                    except Exception:
+                        raw_ical = caldata_el.text or ''
+                    raw_ical = raw_ical.strip()
+                    try:
+                        head_preview = raw_ical[:160].replace('\n', ' ').replace('\r', ' ')
+                        logger.debug(f"Calendar-data block {block_index} raw head='{head_preview}' len={len(raw_ical)}")
+                    except Exception:
+                        pass
                     cleaned = ''.join(ch for ch in raw_ical if ch in ('\n','\r') or ord(ch) >= 32)
                     parse_source = cleaned
                     parsed = False
