@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from websockets import connect
+from websockets import connect, exceptions
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -14,48 +14,62 @@ class MattermostWebSocketListener:
         self.running = False
     
     async def connect(self):
-        """Подключиться к WebSocket Mattermost"""
-        try:
-            # Получить WebSocket URL
-            ws_url = Config.MATTERMOST_BASE_URL.replace("https://", "wss://").replace("http://", "ws://")
-            ws_url += "/api/v4/websocket"
+        """Подключиться к WebSocket Mattermost с автоматическим переподключением"""
+        while self.running or not hasattr(self, '_connect_called'):
+            self._connect_called = True
+            try:
+                # Получить WebSocket URL
+                ws_url = Config.MATTERMOST_BASE_URL.replace("https://", "wss://").replace("http://", "ws://")
+                ws_url += "/api/v4/websocket"
+                
+                logger.info(f"Connecting to WebSocket: {ws_url}")
+                
+                async with connect(ws_url, ping_interval=30) as ws:
+                    self.ws = ws
+                    
+                    # Отправить токен аутентификации
+                    auth_msg = {
+                        "action": "authentication_challenge",
+                        "data": {
+                            "token": Config.MATTERMOST_BOT_TOKEN
+                        }
+                    }
+                    await self.ws.send(json.dumps(auth_msg))
+                    
+                    logger.info("WebSocket connected and authenticated")
+                    self.running = True
+                    
+                    # Запустить цикл прослушивания
+                    await self.listen()
             
-            logger.info(f"Connecting to WebSocket: {ws_url}")
+            except (exceptions.ConnectionClosed, ConnectionResetError) as e:
+                logger.warning(f"WebSocket connection lost: {e}. Reconnecting in 5 seconds...")
+                self.running = False
+                await asyncio.sleep(5)
             
-            self.ws = await connect(ws_url)
-            
-            # Отправить токен аутентификации
-            auth_msg = {
-                "action": "authentication_challenge",
-                "data": {
-                    "token": Config.MATTERMOST_BOT_TOKEN
-                }
-            }
-            await self.ws.send(json.dumps(auth_msg))
-            
-            logger.info("WebSocket connected and authenticated")
-            self.running = True
-            
-            # Запустить цикл прослушивания
-            await self.listen()
-        
-        except Exception as e:
-            logger.error(f"Error connecting to WebSocket: {e}")
-            self.running = False
+            except Exception as e:
+                logger.error(f"Error connecting to WebSocket: {e}")
+                self.running = False
+                await asyncio.sleep(5)
     
     async def listen(self):
         """Слушать события от WebSocket"""
         try:
-            while self.running:
-                message = await self.ws.recv()
-                data = json.loads(message)
+            while self.running and self.ws:
+                try:
+                    message = await asyncio.wait_for(self.ws.recv(), timeout=60)
+                    data = json.loads(message)
+                    
+                    event_type = data.get('event')
+                    
+                    if event_type == "posted":
+                        await self.handle_posted(data)
+                    elif event_type == "status_change":
+                        await self.handle_status_change(data)
                 
-                event_type = data.get('event')
-                
-                if event_type == "posted":
-                    await self.handle_posted(data)
-                elif event_type == "status_change":
-                    await self.handle_status_change(data)
+                except asyncio.TimeoutError:
+                    logger.debug("WebSocket timeout, sending ping...")
+                    continue
         
         except Exception as e:
             logger.error(f"Error in WebSocket listen: {e}")
@@ -100,5 +114,8 @@ class MattermostWebSocketListener:
         """Отключиться от WebSocket"""
         self.running = False
         if self.ws:
-            await self.ws.close()
+            try:
+                await self.ws.close()
+            except:
+                pass
         logger.info("WebSocket disconnected")
