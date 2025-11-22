@@ -73,8 +73,12 @@ class CalDAVManager:
             try:
                 async with session.request("PROPFIND", self.principal_url, headers=headers) as resp:
                     text = await resp.text()
-                    if resp.status not in (200, 207):
-                        logger.debug(f"Principal PROPFIND failed: {resp.status} {self.principal_url}")
+                    status = resp.status
+                    # Логируем статус и первые 500 символов ответа (если очень длинный)
+                    snippet = text[:500].replace('\n', ' ')
+                    logger.debug(f"Principal PROPFIND status={status} url={self.principal_url} body[0:500]='{snippet}'")
+                    if status not in (200, 207):
+                        logger.debug(f"Principal PROPFIND failed: {status} {self.principal_url}")
                     else:
                         from xml.etree import ElementTree as ET
                         ns = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav"}
@@ -89,15 +93,14 @@ class CalDAVManager:
                                 if prop is None:
                                     continue
                                 rtype = prop.find("d:resourcetype", ns)
-                                if rtype is None:
-                                    continue
-                                is_calendar = rtype.find("c:calendar", ns) is not None
-                                if not is_calendar:
-                                    continue
                                 displayname_el = prop.find("d:displayname", ns)
                                 displayname = displayname_el.text.strip() if displayname_el is not None and displayname_el.text else ""
                                 href = href_el.text.strip() if href_el.text else ""
-                                if href:
+                                is_calendar = False
+                                if rtype is not None and rtype.find("c:calendar", ns) is not None:
+                                    is_calendar = True
+                                logger.debug(f"PROPFIND item href='{href}' displayname='{displayname}' is_calendar={is_calendar}")
+                                if is_calendar and href:
                                     calendars.append({"href": href if href.endswith('/') else href + '/', "name": displayname or "Calendar"})
                         except Exception as e:
                             logger.debug(f"Failed to parse principal PROPFIND XML: {e}")
@@ -131,11 +134,14 @@ class CalDAVManager:
             for href in candidates:
                 try:
                     async with session.request("PROPFIND", href, headers={"Depth": "0"}) as resp:
+                        body = await resp.text()
+                        snippet = body[:300].replace('\n',' ')
                         if resp.status in (200, 207):
                             logger.info(f"CalDAV fallback calendar path detected: {href}")
+                            logger.debug(f"Fallback PROPFIND status={resp.status} body[0:300]='{snippet}'")
                             return [{"href": href, "name": "Calendar"}]
                         else:
-                            logger.debug(f"CalDAV fallback probe failed: {href} -> {resp.status}")
+                            logger.debug(f"CalDAV fallback probe failed: {href} -> {resp.status} body[0:200]='{snippet[:200]}'")
                 except Exception as e:
                     logger.debug(f"CalDAV fallback probe error {href}: {e}")
 
