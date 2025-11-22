@@ -9,7 +9,6 @@ from mattermost_manager import MattermostManager
 from bot_logic import BotLogic
 from ui_messages import UIMessages, ButtonActions
 from notification_manager import NotificationManager
-from ws_listener import MattermostWebSocketListener
 from web_handler import start_web_server
 import re
 
@@ -28,7 +27,6 @@ class Bot:
                                     Config.BOT_NAME)
         self.logic = BotLogic(self.db, self.mm)
         self.notification_manager = NotificationManager(self.db, self.mm)
-        self.ws_listener = MattermostWebSocketListener(self)
         self.running = False
         self.web_runner = None
     
@@ -63,9 +61,6 @@ class Bot:
     
     async def _cleanup(self):
         """Очистка ресурсов"""
-        # Остановить WebSocket
-        await self.ws_listener.disconnect()
-        
         # Остановить Mattermost сессию
         await self.mm.disconnect()
         
@@ -82,17 +77,15 @@ class Bot:
         
         logger.info("Bot connected successfully")
         
-        # Запустить веб-сервер для обработки действий
+        # Запустить веб-сервер для обработки действий (вебхуки и интерактивные кнопки)
         self.web_runner = await start_web_server(self, "0.0.0.0", 8080)
-        
-        # Запустить WebSocket слушатель
-        ws_task = asyncio.create_task(self.ws_listener.connect())
+        logger.info("Waiting for webhooks and button actions...")
         
         # Запустить цикл проверки уведомлений
         check_task = asyncio.create_task(self.check_notifications_loop())
         
         try:
-            await asyncio.gather(ws_task, check_task)
+            await check_task
         except Exception as e:
             logger.error(f"Error in main loop: {e}")
         finally:
