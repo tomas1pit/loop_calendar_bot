@@ -196,6 +196,8 @@ class MattermostWebSocketListener:
                             self.bot.handle_dialog_step(user_id, channel_id, user_state, message)
                         )
                     )
+                except Exception as e:
+                    logger.error(f"Failed to schedule dialog handler task: {e}", exc_info=True)
                 return
 
             logger.info(f"✗ Bot @{bot_name} NOT mentioned and no active state (message: {message[:100]})")
