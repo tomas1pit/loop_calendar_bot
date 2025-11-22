@@ -77,9 +77,7 @@ class CalDAVManager:
                 async with session.request("PROPFIND", self.principal_url, headers=headers) as resp:
                     text = await resp.text()
                     status = resp.status
-                    # Логируем статус и первые 500 символов ответа (если очень длинный)
-                    snippet = text[:500].replace('\n', ' ')
-                    logger.info(f"Principal PROPFIND status={status} url={self.principal_url} body[0:200]='{snippet[:200]}'")
+                    logger.info(f"Principal PROPFIND status={status} url={self.principal_url}")
                     if status not in (200, 207):
                         logger.info(f"Principal PROPFIND failed: {status} {self.principal_url}")
                     else:
@@ -102,7 +100,6 @@ class CalDAVManager:
                                 is_calendar = False
                                 if rtype is not None and rtype.find("c:calendar", ns) is not None:
                                     is_calendar = True
-                                logger.info(f"PROPFIND item href='{href}' displayname='{displayname}' is_calendar={is_calendar}")
                                 # Запоминаем корневую директорию календарей пользователя
                                 if href.endswith('/calendars/'):
                                     calendars_root_href = href
@@ -120,13 +117,12 @@ class CalDAVManager:
                     calendars_root_url = self.base_url.rstrip('/') + calendars_root_href
                 else:
                     calendars_root_url = calendars_root_href
-                logger.info(f"Enumerating user calendars via Depth=1 on {calendars_root_url}")
+                logger.info(f"Enumerating calendars at {calendars_root_url}")
                 try:
                     async with session.request("PROPFIND", calendars_root_url, headers={"Depth": "1"}) as resp2:
                         text2 = await resp2.text()
                         status2 = resp2.status
-                        snippet2 = text2[:400].replace('\n',' ')
-                        logger.info(f"Calendars collection PROPFIND status={status2} body[0:200]='{snippet2[:200]}'")
+                        logger.info(f"Calendars collection PROPFIND status={status2}")
                         if status2 in (200,207):
                             from xml.etree import ElementTree as ET
                             ns = {"d": "DAV:", "c": "urn:ietf:params:xml:ns:caldav"}
@@ -145,7 +141,6 @@ class CalDAVManager:
                                     displayname = displayname_el.text.strip() if displayname_el is not None and displayname_el.text else ""
                                     href_child = href_el.text.strip() if href_el.text else ""
                                     is_calendar = rtype is not None and rtype.find("c:calendar", ns) is not None
-                                    logger.info(f"Calendars Depth=1 item href='{href_child}' displayname='{displayname}' is_calendar={is_calendar}")
                                     if is_calendar and href_child != calendars_root_href:
                                         full_child_href = href_child if href_child.endswith('/') else href_child + '/'
                                         if full_child_href.startswith('/'):
@@ -157,21 +152,13 @@ class CalDAVManager:
                     logger.info(f"Error during calendars root enumeration: {e}")
 
             # Приоритизируем Main / Основной
-            preferred = []
-            for c in calendars:
-                name_lower = c["name"].lower()
-                if name_lower in ("main", "основной"):
-                    preferred.append(c)
-
-            if preferred:
-                for p in preferred:
-                    logger.info(f"CalDAV preferred calendar detected: {p['href']} name={p['name']}")
-                return preferred
-
-            if calendars:
-                for c in calendars:
-                    logger.info(f"CalDAV calendar detected: {c['href']} name={c['name']}")
-                return calendars
+            preferred = [c for c in calendars if c["name"].lower() in ("main", "основной")]
+            selected = preferred or calendars
+            if selected:
+                # Логируем только выбранные (приоритетные либо первые найденные)
+                for c in selected:
+                    logger.info(f"CalDAV calendar selected: {c['href']} name={c['name']}")
+                return selected
 
             # Если не нашли через автоматический способ — пробуем кандидаты (фоллбек)
             candidates = [
@@ -180,20 +167,18 @@ class CalDAVManager:
                 f"{self.base_url}/dav/{self.email}/",
                 f"{self.base_url}/calendars/{self.email}/",
             ]
-            logger.info(f"CalDAV fallback candidates: {candidates}")
+            # Сокращённый fallback перебор
             for href in candidates:
                 try:
                     async with session.request("PROPFIND", href, headers={"Depth": "0"}) as resp:
                         body = await resp.text()
-                        snippet = body[:300].replace('\n',' ')
                         if resp.status in (200, 207):
                             logger.info(f"CalDAV fallback calendar path detected: {href}")
-                            logger.info(f"Fallback PROPFIND status={resp.status} body[0:150]='{snippet[:150]}'")
                             return [{"href": href, "name": "Calendar"}]
                         else:
-                            logger.info(f"CalDAV fallback probe failed: {href} -> {resp.status} body[0:120]='{snippet[:120]}'")
+                            logger.debug(f"Fallback probe failed: {href} status={resp.status}")
                 except Exception as e:
-                    logger.info(f"CalDAV fallback probe error {href}: {e}")
+                    logger.debug(f"Fallback probe error {href}: {e}")
 
             logger.error("No CalDAV calendar path found after enumeration and fallback probes")
             return []
