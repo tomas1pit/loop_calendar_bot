@@ -2,6 +2,7 @@ import threading
 import json
 import logging
 import time
+import socket
 from websocket import create_connection, WebSocketConnectionClosedException
 from config import Config
 
@@ -40,10 +41,17 @@ class MattermostWebSocketListener:
                 logger.info("WebSocket connection established")
                 
                 # Сначала получить приветствие (hello) от сервера
-                hello_response = self.ws.recv()
-                if hello_response:
-                    hello_data = json.loads(hello_response)
-                    logger.debug(f"Received hello: {hello_data.get('event', 'unknown')}")
+                try:
+                    hello_response = self.ws.recv()
+                    if hello_response:
+                        hello_data = json.loads(hello_response)
+                        logger.debug(f"Received hello: {hello_data.get('event', 'unknown')}")
+                except Exception as e:
+                    logger.error(f"Failed to receive hello: {e}")
+                    if self.ws:
+                        self.ws.close()
+                    time.sleep(self.reconnect_delay)
+                    continue
                 
                 # Отправить токен аутентификации
                 auth_msg = {
@@ -55,27 +63,42 @@ class MattermostWebSocketListener:
                 }
                 self.seq += 1
                 
-                self.ws.send(json.dumps(auth_msg))
-                logger.debug("Sent auth message")
+                try:
+                    self.ws.send(json.dumps(auth_msg))
+                    logger.debug("Sent auth message")
+                except Exception as e:
+                    logger.error(f"Failed to send auth message: {e}")
+                    if self.ws:
+                        self.ws.close()
+                    time.sleep(self.reconnect_delay)
+                    continue
                 
                 # Получить ответ на аутентификацию
-                response = self.ws.recv()
-                if response:
-                    auth_response = json.loads(response)
-                    logger.debug(f"Auth response: {auth_response}")
-                    
-                    # Проверяем статус аутентификации - может быть в разных полях
-                    status = auth_response.get('status') or (auth_response.get('data', {}).get('status') if isinstance(auth_response.get('data'), dict) else None)
-                    
-                    if status == 'OK' or auth_response.get('event') == 'authenticated':
-                        logger.info("WebSocket authenticated successfully")
-                        # Запустить цикл слушания
-                        self._listen()
-                    else:
-                        logger.error(f"Authentication failed: {auth_response}")
-                        if self.ws:
-                            self.ws.close()
-                        time.sleep(self.reconnect_delay)
+                auth_ok = False
+                try:
+                    response = self.ws.recv()
+                    if response:
+                        auth_response = json.loads(response)
+                        logger.debug(f"Auth response event: {auth_response.get('event')}, status: {auth_response.get('status')}")
+                        
+                        # Проверяем статус аутентификации - может быть в разных полях
+                        status = auth_response.get('status') or (auth_response.get('data', {}).get('status') if isinstance(auth_response.get('data'), dict) else None)
+                        
+                        if status == 'OK' or auth_response.get('event') == 'authenticated':
+                            logger.info("WebSocket authenticated successfully")
+                            auth_ok = True
+                        else:
+                            logger.error(f"Authentication failed: {auth_response}")
+                except Exception as e:
+                    logger.error(f"Failed to receive auth response: {e}")
+                
+                if auth_ok:
+                    # Запустить цикл слушания
+                    self._listen()
+                else:
+                    if self.ws:
+                        self.ws.close()
+                    time.sleep(self.reconnect_delay)
             
             except WebSocketConnectionClosedException:
                 logger.warning(f"WebSocket connection closed. Reconnecting in {self.reconnect_delay} seconds...")
@@ -105,12 +128,20 @@ class MattermostWebSocketListener:
                         continue
                     
                     event_type = data.get('event')
+                    logger.debug(f"Received event: {event_type}")
                     
                     if event_type == "posted":
                         self.handle_posted(data)
                     elif event_type == "status_change":
                         self.handle_status_change(data)
+                    elif event_type == "hello":
+                        # Периодический hello от сервера, игнорируем
+                        logger.debug("Received periodic hello")
                 
+                except socket.timeout:
+                    # Таймаут - это нормально, просто продолжаем
+                    logger.debug("Socket timeout, continuing...")
+                    continue
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
                     break
