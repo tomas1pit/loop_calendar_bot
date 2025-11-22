@@ -85,25 +85,31 @@ class MattermostWebSocketListener:
                     
                     event_type = data.get('event')
                     
+                    # Логируем ВСЕ события с полной информацией
+                    logger.info(f"=== WebSocket EVENT ===")
+                    logger.info(f"Event type: {event_type}")
+                    logger.info(f"Full data: {json.dumps(data, ensure_ascii=False, indent=2)}")
+                    logger.info(f"======================")
+                    
                     if event_type == "posted":
-                        logger.debug(f"Posted event received")
+                        logger.info(f"Posted event received - processing...")
                         self.handle_posted(data)
                     elif event_type == "status_change":
-                        logger.debug(f"Status change event received")
+                        logger.info(f"Status change event received - processing...")
                         self.handle_status_change(data)
                     else:
-                        # Игнорируем другие события (hello, auth_ok, и т.д.)
-                        logger.debug(f"Received event: {event_type}")
+                        # Логируем другие события
+                        logger.info(f"Received other event: {event_type}")
                 
                 except WebSocketConnectionClosedException:
                     logger.info("WebSocket connection closed during listen")
                     break
                 except Exception as e:
-                    logger.error(f"Error processing message: {e}")
+                    logger.error(f"Error processing message: {e}", exc_info=True)
                     break
         
         except Exception as e:
-            logger.error(f"Error in WebSocket listen: {e}")
+            logger.error(f"Error in WebSocket listen: {e}", exc_info=True)
         
         finally:
             if self.ws:
@@ -124,18 +130,33 @@ class MattermostWebSocketListener:
                 post = json.loads(post)
             
             if not post:
+                logger.warning("Posted event has no post data")
                 return
             
             message = post.get('message', '')
             user_id = post.get('user_id', '')
             channel_id = post.get('channel_id', '')
+            post_id = post.get('id', '')
             
-            logger.debug(f"Posted: user={user_id}, channel={channel_id}, message={message[:50] if message else 'empty'}")
+            logger.info(f"=== POSTED MESSAGE ===")
+            logger.info(f"User ID: {user_id}")
+            logger.info(f"Channel ID: {channel_id}")
+            logger.info(f"Post ID: {post_id}")
+            logger.info(f"Message: {message}")
+            logger.info(f"Full post: {json.dumps(post, ensure_ascii=False, indent=2)}")
+            logger.info(f"======================")
             
-            # TODO: Обработать сообщение от бота (если нужно)
+            # Проверить, упоминается ли бот
+            bot_name = Config.BOT_NAME.lower()
+            message_lower = message.lower()
+            
+            if f"@{bot_name}" in message_lower or bot_name in message_lower:
+                logger.info(f"✓ Bot @{bot_name} mentioned in message!")
+            else:
+                logger.info(f"✗ Bot @{bot_name} NOT mentioned (message: {message[:100]})")
         
         except Exception as e:
-            logger.error(f"Error handling posted event: {e}")
+            logger.error(f"Error handling posted event: {e}", exc_info=True)
     
     def handle_status_change(self, data: dict):
         """Обработать изменение статуса"""
