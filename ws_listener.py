@@ -157,7 +157,8 @@ class MattermostWebSocketListener:
             # Проверить, упоминается ли бот
             bot_name = Config.BOT_NAME.lower()
             message_lower = message.lower()
-            
+
+            # 1) Если бот явно упомянут — запускаем логику меню/авторизации
             if f"@{bot_name}" in message_lower or bot_name in message_lower:
                 logger.info(f"✓ Bot @{bot_name} mentioned in message!")
 
@@ -174,8 +175,32 @@ class MattermostWebSocketListener:
                 else:
                     # Пользователь авторизован — отправляем главное меню
                     self._send_menu_reply(user_id, channel_id, post_id)
-            else:
-                logger.info(f"✗ Bot @{bot_name} NOT mentioned (message: {message[:100]})")
+                return
+
+            # 2) Если бот НЕ упомянут, но у пользователя есть активное состояние диалога,
+            #    передаём сообщение в Bot.handle_dialog_step (пароль, шаги мастера и т.п.)
+            try:
+                user_state = self.bot.logic.get_user_state(user_id)
+            except Exception as e:
+                logger.error(f"Error getting user state: {e}", exc_info=True)
+                user_state = None
+
+            if user_state and user_state.state:
+                logger.info(f"User {user_id} has active state '{user_state.state}', passing message to dialog handler")
+                try:
+                    # Вызываем асинхронный обработчик из sync-потока через asyncio.run
+                    import asyncio
+                    asyncio.run(self.bot.handle_dialog_step(user_id, channel_id, user_state, message))
+                except RuntimeError:
+                    # Если цикл уже запущен (например, в том же процессе), используем create_task
+                    try:
+                        loop = asyncio.get_event_loop()
+                        loop.create_task(self.bot.handle_dialog_step(user_id, channel_id, user_state, message))
+                    except Exception as e:
+                        logger.error(f"Failed to schedule dialog handler task: {e}", exc_info=True)
+                return
+
+            logger.info(f"✗ Bot @{bot_name} NOT mentioned and no active state (message: {message[:100]})")
         
         except Exception as e:
             logger.error(f"Error handling posted event: {e}", exc_info=True)
