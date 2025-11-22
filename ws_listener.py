@@ -13,6 +13,7 @@ class MattermostWebSocketListener:
         self.ws = None
         self.running = False
         self.reconnect_delay = 5
+        self.heartbeat_interval = 30
     
     async def connect(self):
         """Подключиться к WebSocket Mattermost с автоматическим переподключением"""
@@ -26,7 +27,7 @@ class MattermostWebSocketListener:
                 
                 logger.info(f"Connecting to WebSocket: {ws_url}")
                 
-                self.ws = await connect(ws_url, ping_interval=30, close_timeout=10)
+                self.ws = await connect(ws_url, ping_interval=None, pong_timeout=None)
                 
                 # Отправить токен аутентификации
                 auth_msg = {
@@ -39,8 +40,12 @@ class MattermostWebSocketListener:
                 
                 logger.info("WebSocket connected and authenticated")
                 
-                # Запустить цикл прослушивания
-                await self.listen()
+                # Запустить задачи слушания и heartbeat
+                listen_task = asyncio.create_task(self.listen())
+                heartbeat_task = asyncio.create_task(self.send_heartbeat())
+                
+                # Ждём, пока одна из них не завершится
+                await asyncio.gather(listen_task, heartbeat_task)
             
             except exceptions.ConnectionClosed as e:
                 logger.warning(f"WebSocket connection closed: {e}. Reconnecting in {self.reconnect_delay} seconds...")
@@ -56,6 +61,56 @@ class MattermostWebSocketListener:
                 logger.error(f"Error in WebSocket connection: {e}")
                 if self.running:
                     await asyncio.sleep(self.reconnect_delay)
+    
+    async def send_heartbeat(self):
+        """Отправлять периодические heartbeat сообщения для поддержки соединения"""
+        while self.running and self.ws:
+            try:
+                await asyncio.sleep(self.heartbeat_interval)
+                if self.running and self.ws:
+                    # Отправить пустое сообщение как heartbeat
+                    await self.ws.send("")
+                    logger.debug("Heartbeat sent")
+            except Exception as e:
+                logger.debug(f"Error sending heartbeat: {e}")
+                break
+    
+    async def listen(self):
+        """Слушать события от WebSocket"""
+        try:
+            while self.running and self.ws:
+                try:
+                    message = await self.ws.recv()
+                    
+                    if not message:
+                        continue
+                    
+                    try:
+                        data = json.loads(message)
+                    except json.JSONDecodeError:
+                        logger.debug(f"Invalid JSON received: {message}")
+                        continue
+                    
+                    event_type = data.get('event')
+                    
+                    if event_type == "posted":
+                        await self.handle_posted(data)
+                    elif event_type == "status_change":
+                        await self.handle_status_change(data)
+                
+                except exceptions.ConnectionClosed:
+                    logger.info("WebSocket connection closed by server")
+                    break
+                
+                except Exception as e:
+                    logger.error(f"Error processing message: {e}")
+                    break
+        
+        except Exception as e:
+            logger.error(f"Error in WebSocket listen: {e}")
+        
+        finally:
+            self.ws = None
     
     async def listen(self):
         """Слушать события от WebSocket"""
