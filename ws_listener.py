@@ -86,11 +86,11 @@ class MattermostWebSocketListener:
                     
                     event_type = data.get('event')
                     
-                    # Логируем ВСЕ события с полной информацией
-                    logger.info(f"=== WebSocket EVENT ===")
-                    logger.info(f"Event type: {event_type}")
-                    logger.info(f"Full data: {json.dumps(data, ensure_ascii=False, indent=2)}")
-                    logger.info(f"======================")
+                    # # Логируем ВСЕ события с полной информацией
+                    # logger.info(f"=== WebSocket EVENT ===")
+                    # logger.info(f"Event type: {event_type}")
+                    # logger.info(f"Full data: {json.dumps(data, ensure_ascii=False, indent=2)}")
+                    # logger.info(f"======================")
                     
                     if event_type == "posted":
                         logger.info(f"Posted event received - processing...")
@@ -146,13 +146,13 @@ class MattermostWebSocketListener:
             channel_id = post.get('channel_id', '')
             post_id = post.get('id', '')
             
-            logger.info(f"=== POSTED MESSAGE ===")
-            logger.info(f"User ID: {user_id}")
-            logger.info(f"Channel ID: {channel_id}")
-            logger.info(f"Post ID: {post_id}")
-            logger.info(f"Message: {message}")
-            logger.info(f"Full post: {json.dumps(post, ensure_ascii=False, indent=2)}")
-            logger.info(f"======================")
+            # logger.info(f"=== POSTED MESSAGE ===")
+            # logger.info(f"User ID: {user_id}")
+            # logger.info(f"Channel ID: {channel_id}")
+            # logger.info(f"Post ID: {post_id}")
+            # logger.info(f"Message: {message}")
+            # logger.info(f"Full post: {json.dumps(post, ensure_ascii=False, indent=2)}")
+            # logger.info(f"======================")
             
             # Проверить, упоминается ли бот
             bot_name = Config.BOT_NAME.lower()

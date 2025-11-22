@@ -45,6 +45,9 @@ class ActionHandler:
 
             elif action == ButtonActions.NO_INVITE:
                 await self.no_invite(user_id, channel_id)
+
+            elif action == ButtonActions.CANCEL_WIZARD:
+                await self.cancel_wizard(user_id, channel_id)
             
             elif action == ButtonActions.SELECT_MEETING:
                 # meeting_id приходит как selected_option.value
@@ -252,6 +255,16 @@ class ActionHandler:
         except Exception as e:
             logger.error(f"Error handling no_invite: {e}")
             await self.bot.mm.send_message(channel_id, "Ошибка при обработке участников")
+
+    async def cancel_wizard(self, user_id: str, channel_id: str):
+        """Отмена мастера создания встречи"""
+        try:
+            self.bot.logic.clear_user_state(user_id)
+            await self.bot.mm.send_message(channel_id, "Диалог создания встречи отменён.")
+            await self.bot.show_main_menu(user_id, channel_id)
+        except Exception as e:
+            logger.error(f"Error cancelling wizard: {e}")
+            await self.bot.mm.send_message(channel_id, "Ошибка при отмене создания встречи")
     
     async def show_meeting_details(self, user_id: str, channel_id: str, meeting_id: str):
         """Показать детали встречи"""

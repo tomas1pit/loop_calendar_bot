@@ -317,21 +317,72 @@ class Bot:
         """Попросить дату встречи"""
         today = datetime.now().strftime("%d.%m.%Y")
         message = UIMessages.create_meeting_step_3(today)
-        await self.mm.send_message(channel_id, message)
+
+        attachments = [{
+            "fallback": "Cancel",
+            "actions": [{
+                "name": "Отменить",
+                "style": "danger",
+                "type": "button",
+                "integration": {
+                    "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                    "context": {
+                        "action": ButtonActions.CANCEL_WIZARD,
+                        "user_id": user_id,
+                    },
+                },
+            }],
+        }]
+
+        await self.mm.create_post_with_attachments(channel_id, message, attachments)
         
         self.logic.set_user_state(user_id, "creating_meeting_date", state_data)
     
     async def ask_meeting_time(self, user_id: str, channel_id: str, state_data: Dict):
         """Попросить время начала встречи"""
         message = UIMessages.create_meeting_step_5()
-        await self.mm.send_message(channel_id, message)
+
+        attachments = [{
+            "fallback": "Cancel",
+            "actions": [{
+                "name": "Отменить",
+                "style": "danger",
+                "type": "button",
+                "integration": {
+                    "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                    "context": {
+                        "action": ButtonActions.CANCEL_WIZARD,
+                        "user_id": user_id,
+                    },
+                },
+            }],
+        }]
+
+        await self.mm.create_post_with_attachments(channel_id, message, attachments)
         
         self.logic.set_user_state(user_id, "creating_meeting_time", state_data)
     
     async def ask_meeting_duration(self, user_id: str, channel_id: str, state_data: Dict):
         """Попросить продолжительность встречи"""
         message = UIMessages.create_meeting_step_7()
-        await self.mm.send_message(channel_id, message)
+
+        attachments = [{
+            "fallback": "Cancel",
+            "actions": [{
+                "name": "Отменить",
+                "style": "danger",
+                "type": "button",
+                "integration": {
+                    "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                    "context": {
+                        "action": ButtonActions.CANCEL_WIZARD,
+                        "user_id": user_id,
+                    },
+                },
+            }],
+        }]
+
+        await self.mm.create_post_with_attachments(channel_id, message, attachments)
         
         self.logic.set_user_state(user_id, "creating_meeting_duration", state_data)
     
@@ -339,21 +390,35 @@ class Bot:
         """Попросить участников встречи"""
         message = UIMessages.create_meeting_step_9()
 
-        # Кнопка «Никого не приглашать»
+        # Кнопки «Никого не приглашать» и «Отменить»
         attachments = [{
-            "fallback": "No invite",
-            "actions": [{
-                "name": "Никого не приглашать",
-                "style": "danger",
-                "type": "button",
-                "integration": {
-                    "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
-                    "context": {
-                        "action": ButtonActions.NO_INVITE,
-                        "user_id": user_id,
+            "fallback": "Attendees actions",
+            "actions": [
+                {
+                    "name": "Никого не приглашать",
+                    "style": "primary",
+                    "type": "button",
+                    "integration": {
+                        "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                        "context": {
+                            "action": ButtonActions.NO_INVITE,
+                            "user_id": user_id,
+                        },
                     },
                 },
-            }],
+                {
+                    "name": "Отменить",
+                    "style": "danger",
+                    "type": "button",
+                    "integration": {
+                        "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                        "context": {
+                            "action": ButtonActions.CANCEL_WIZARD,
+                            "user_id": user_id,
+                        },
+                    },
+                },
+            ],
         }]
 
         await self.mm.create_post_with_attachments(channel_id, message, attachments)
@@ -364,17 +429,32 @@ class Bot:
         message = UIMessages.create_meeting_step_11()
         
         attachments = [{
-            "fallback": "Skip",
-            "actions": [{
-                "name": "Не добавлять",
-                "integration": {
-                    "url": Config.MM_ACTIONS_URL,
-                    "context": {
-                        "action": "skip_description",
-                        "user_id": user_id
-                    }
-                }
-            }]
+            "fallback": "Description actions",
+            "actions": [
+                {
+                    "name": "Не добавлять",
+                    "type": "button",
+                    "integration": {
+                        "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                        "context": {
+                            "action": "skip_description",
+                            "user_id": user_id,
+                        },
+                    },
+                },
+                {
+                    "name": "Отменить",
+                    "style": "danger",
+                    "type": "button",
+                    "integration": {
+                        "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                        "context": {
+                            "action": ButtonActions.CANCEL_WIZARD,
+                            "user_id": user_id,
+                        },
+                    },
+                },
+            ],
         }]
         
         self.mm.create_post_with_attachments(channel_id, message, attachments)
@@ -386,17 +466,32 @@ class Bot:
         message = UIMessages.create_meeting_step_13()
         
         attachments = [{
-            "fallback": "Skip",
-            "actions": [{
-                "name": "Не добавлять",
-                "integration": {
-                    "url": Config.MM_ACTIONS_URL,
-                    "context": {
-                        "action": "skip_location",
-                        "user_id": user_id
-                    }
-                }
-            }]
+            "fallback": "Location actions",
+            "actions": [
+                {
+                    "name": "Не добавлять",
+                    "type": "button",
+                    "integration": {
+                        "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                        "context": {
+                            "action": "skip_location",
+                            "user_id": user_id,
+                        },
+                    },
+                },
+                {
+                    "name": "Отменить",
+                    "style": "danger",
+                    "type": "button",
+                    "integration": {
+                        "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                        "context": {
+                            "action": ButtonActions.CANCEL_WIZARD,
+                            "user_id": user_id,
+                        },
+                    },
+                },
+            ],
         }]
         
         self.mm.create_post_with_attachments(channel_id, message, attachments)

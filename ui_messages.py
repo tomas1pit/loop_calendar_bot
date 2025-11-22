@@ -204,6 +204,7 @@ class ButtonActions:
     NO_LOCATION = "no_location"
     MEETING_DETAIL = "meeting_detail_"
     SELECT_MEETING = "select_meeting_"
+    CANCEL_WIZARD = "cancel_wizard"
 
 
 def create_main_menu_buttons() -> list:
