@@ -357,82 +357,79 @@ class CalDAVManager:
             }
 
             for resp in root.findall("d:response", ns):
-                propstat = resp.find("d:propstat", ns)
-                if propstat is None:
-                    continue
-                prop = propstat.find("d:prop", ns)
-                if prop is None:
-                    continue
-                caldata_el = prop.find("c:calendar-data", ns)
-                if caldata_el is None or not caldata_el.text:
-                    continue
-
-                ical_str = caldata_el.text
-                try:
-                    cal = Calendar.from_ical(ical_str)
-                except Exception:
-                    continue
-
-                for component in cal.walk():
-                    if component.name != "VEVENT":
+                # REPORT ответ может содержать несколько propstat; calendar-data не всегда в первом
+                for propstat in resp.findall("d:propstat", ns):
+                    prop = propstat.find("d:prop", ns)
+                    if prop is None:
+                        continue
+                    caldata_el = prop.find("c:calendar-data", ns)
+                    if caldata_el is None or not caldata_el.text:
                         continue
 
+                    ical_str = caldata_el.text.strip()
                     try:
-                        uid = str(component.get("uid", ""))
-                        title = str(component.get("summary", "Без названия"))
-
-                        dtstart = component.get("dtstart").dt
-                        dtend = component.get("dtend").dt
-
-                        # Нормализуем в timezone из конфигурации
-                        tz = pytz.timezone(Config.TZ)
-                        if not isinstance(dtstart, datetime):
-                            dtstart = datetime.combine(dtstart, datetime.min.time())
-                        if not isinstance(dtend, datetime):
-                            dtend = datetime.combine(dtend, datetime.min.time())
-
-                        if dtstart.tzinfo is None:
-                            dtstart = tz.localize(dtstart)
-                        else:
-                            dtstart = dtstart.astimezone(tz)
-
-                        if dtend.tzinfo is None:
-                            dtend = tz.localize(dtend)
-                        else:
-                            dtend = dtend.astimezone(tz)
-
-                        # Участники
-                        attendees: List[str] = []
-                        for att in component.get_all("attendee", []):
-                            addr = str(att)
-                            if addr.lower().startswith("mailto:"):
-                                addr = addr[7:]
-                            attendees.append(addr)
-
-                        organizer = component.get("organizer")
-                        organizer_email = ""
-                        if organizer:
-                            organizer_email = str(organizer)
-                            if organizer_email.lower().startswith("mailto:"):
-                                organizer_email = organizer_email[7:]
-
-                        description = str(component.get("description", ""))
-                        location = str(component.get("location", ""))
-                        status = str(component.get("status", "CONFIRMED"))
-
-                        events.append({
-                            "uid": uid,
-                            "title": title,
-                            "start_time": dtstart.isoformat(),
-                            "end_time": dtend.isoformat(),
-                            "attendees": attendees,
-                            "description": description,
-                            "location": location,
-                            "organizer": organizer_email,
-                            "status": status,
-                        })
+                        cal = Calendar.from_ical(ical_str)
                     except Exception:
                         continue
+
+                    for component in cal.walk():
+                        if component.name != "VEVENT":
+                            continue
+
+                        try:
+                            uid = str(component.get("uid", ""))
+                            title = str(component.get("summary", "Без названия"))
+
+                            dtstart = component.get("dtstart").dt
+                            dtend = component.get("dtend").dt
+
+                            tz = pytz.timezone(Config.TZ)
+                            if not isinstance(dtstart, datetime):
+                                dtstart = datetime.combine(dtstart, datetime.min.time())
+                            if not isinstance(dtend, datetime):
+                                dtend = datetime.combine(dtend, datetime.min.time())
+
+                            if dtstart.tzinfo is None:
+                                dtstart = tz.localize(dtstart)
+                            else:
+                                dtstart = dtstart.astimezone(tz)
+
+                            if dtend.tzinfo is None:
+                                dtend = tz.localize(dtend)
+                            else:
+                                dtend = dtend.astimezone(tz)
+
+                            attendees: List[str] = []
+                            for att in component.get_all("attendee", []):
+                                addr = str(att)
+                                if addr.lower().startswith("mailto:"):
+                                    addr = addr[7:]
+                                attendees.append(addr)
+
+                            organizer = component.get("organizer")
+                            organizer_email = ""
+                            if organizer:
+                                organizer_email = str(organizer)
+                                if organizer_email.lower().startswith("mailto:"):
+                                    organizer_email = organizer_email[7:]
+
+                            description = str(component.get("description", ""))
+                            location = str(component.get("location", ""))
+                            status = str(component.get("status", "CONFIRMED"))
+
+                            events.append({
+                                "uid": uid,
+                                "title": title,
+                                "start_time": dtstart.isoformat(),
+                                "end_time": dtend.isoformat(),
+                                "attendees": attendees,
+                                "description": description,
+                                "location": location,
+                                "organizer": organizer_email,
+                                "status": status,
+                            })
+                        except Exception:
+                            continue
 
         except Exception as e:
             logger.error(f"Error parsing CalDAV events XML: {e}")
