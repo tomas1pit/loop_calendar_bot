@@ -2,7 +2,7 @@ import threading
 import json
 import logging
 import time
-import asyncio
+import requests
 from websocket import create_connection, WebSocketConnectionClosedException
 from config import Config
 
@@ -202,24 +202,34 @@ class MattermostWebSocketListener:
 2️⃣ Создать встречу
 3️⃣ Настройки"""
             
-            # Используем HTTP API для отправки сообщения
-            # Вызываем метод бота через asyncio
-            if self.bot:
-                logger.info("Calling bot.mm.send_message...")
-                # Запускаем асинхронный вызов в отдельном потоке
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(
-                        self.bot.mm.send_message(channel_id, menu_text, root_id=root_id)
-                    )
-                    logger.info("Menu sent successfully")
-                except Exception as e:
-                    logger.error(f"Failed to send menu: {e}", exc_info=True)
-                finally:
-                    loop.close()
+            # Используем синхронный HTTP запрос напрямую
+            base_url = Config.MATTERMOST_BASE_URL.rstrip('/')
+            headers = {
+                'Authorization': f'Bearer {Config.MATTERMOST_BOT_TOKEN}',
+                'Content-Type': 'application/json'
+            }
+            
+            post_data = {
+                'channel_id': channel_id,
+                'message': menu_text,
+                'root_id': root_id
+            }
+            
+            logger.info("Sending POST request to Mattermost API...")
+            response = requests.post(
+                f"{base_url}/api/v4/posts",
+                headers=headers,
+                json=post_data,
+                timeout=10,
+                verify=False  # Отключаем проверку SSL как в mattermost_manager
+            )
+            
+            logger.info(f"Response status: {response.status_code}")
+            
+            if response.status_code == 201:
+                logger.info("Menu sent successfully")
             else:
-                logger.warning("Bot reference is None, cannot send menu")
+                logger.error(f"Failed to send menu: HTTP {response.status_code}, response: {response.text}")
         
         except Exception as e:
             logger.error(f"Error in _send_menu_reply: {e}", exc_info=True)
