@@ -217,6 +217,9 @@ class CalDAVManager:
                             logger.debug(f"CalDAV REPORT failed: {resp.status} for {cal_href}")
                             continue
                         text = await resp.text()
+                        logger.info(
+                            f"CalDAV REPORT RAW primary href={cal_href} status={resp.status} len={len(text)} head='{text[:400].replace('\n',' ') }'"
+                        )
                     evs = self._parse_events(text)
                     logger.debug(f"Fetched {len(evs)} events from {cal_href}")
                     all_events.extend(evs)
@@ -237,6 +240,9 @@ class CalDAVManager:
                             if resp.status not in (200, 207):
                                 continue
                             text = await resp.text()
+                            logger.info(
+                                f"CalDAV REPORT RAW fallback href={cal_href} status={resp.status} len={len(text)} head='{text[:400].replace('\n',' ') }'"
+                            )
                         evs = self._parse_events(text)
                         logger.debug(f"Fallback range fetched {len(evs)} events from {cal_href}")
                         all_events.extend(evs)
