@@ -92,6 +92,8 @@ https://account.mail.ru/user/2-step-auth/passwords/
             message += "_Нет участников_\n"
         
         if description:
+            # Replace escaped \n with actual newlines
+            description = description.replace('\\n', '\n')
             message += f"\n**Описание:**\n{description}"
         
         if location:

@@ -356,9 +356,10 @@ class ActionHandler:
             
             from datetime import datetime, timedelta
             import pytz
+            from config import Config
             
             # Получить события на сегодня
-            tz = pytz.timezone(self.bot.logic.config.TZ)
+            tz = pytz.timezone(Config.TZ)
             now = datetime.now(tz)
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end = start + timedelta(days=1)
