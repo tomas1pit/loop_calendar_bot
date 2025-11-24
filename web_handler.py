@@ -329,6 +329,7 @@ class ActionHandler:
             status = meeting.get("status", "ACCEPTED")
             organizer = meeting.get("organizer", "")
 
+
             message = UIMessages.meeting_details(
                 meeting.get("title", "Без названия"),
                 start_dt,
@@ -340,7 +341,16 @@ class ActionHandler:
                 organizer,
             )
 
-            await self.bot.mm.send_message(channel_id, message)
+            # Получаем состояние пользователя для хранения message_id
+            user_state = self.bot.logic.get_user_state(user_id)
+            if user_state and user_state.message_id:
+                # Обновляем предыдущее сообщение
+                await self.bot.mm.update_post(user_state.message_id, message)
+                # message_id не меняется
+            else:
+                # Отправляем новое сообщение и сохраняем его id
+                msg_id = await self.bot.mm.send_message(channel_id, message)
+                self.bot.logic.set_user_state(user_id, user_state.state if user_state else None, message_id=msg_id)
         
         except Exception as e:
             logger.error(f"Error showing meeting details: {e}")
