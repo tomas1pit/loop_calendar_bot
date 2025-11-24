@@ -21,6 +21,27 @@ logger = logging.getLogger(__name__)
 
 
 class Bot:
+        async def ask_meeting_title(self, user_id: str, channel_id: str, state_data: Dict = None):
+            """Попросить название встречи с кнопкой Отменить"""
+            message = UIMessages.create_meeting_step_1()
+            attachments = [{
+                "fallback": "Cancel",
+                "actions": [{
+                    "name": "Отменить",
+                    "style": "danger",
+                    "type": "button",
+                    "integration": {
+                        "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                        "context": {
+                            "action": ButtonActions.CANCEL_WIZARD,
+                            "user_id": user_id,
+                        },
+                    },
+                }],
+            }]
+            post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
+            post_id = post.get('id') if isinstance(post, dict) else post
+            self.logic.set_user_state(user_id, "creating_meeting_title", state_data or {}, post_id)
     def __init__(self):
         self.db = DatabaseManager(Config.DB_PATH)
         self.mm = MattermostManager(Config.MATTERMOST_BASE_URL, 
@@ -281,6 +302,12 @@ class Bot:
         
         elif current_state == "creating_meeting_title":
             state_data['title'] = message.strip()
+            # Скрыть кнопку Отменить после ввода названия
+            if user_state.message_id:
+                try:
+                    await self.mm.update_post(user_state.message_id, f"Название встречи: ✅ {message.strip()}")
+                except Exception:
+                    pass
             await self.ask_meeting_date(user_id, channel_id, state_data)
         
         elif current_state == "creating_meeting_date":
@@ -364,59 +391,42 @@ class Bot:
     
     async def ask_meeting_date(self, user_id: str, channel_id: str, state_data: Dict):
         """Попросить дату встречи"""
-        today = datetime.now().strftime("%d.%m.%Y")
+        today_dt = datetime.now()
+        today = today_dt.strftime("%d.%m.%Y")
+        tomorrow = (today_dt + timedelta(days=1)).strftime("%d.%m.%Y")
+        after_tomorrow = (today_dt + timedelta(days=2)).strftime("%d.%m.%Y")
         message = UIMessages.create_meeting_step_3(today)
-
         attachments = [{
-            "fallback": "Cancel",
-            "actions": [{
-                "name": "Отменить",
-                "style": "danger",
-                "type": "button",
-                "integration": {
-                    "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
-                    "context": {
-                        "action": ButtonActions.CANCEL_WIZARD,
-                        "user_id": user_id,
-                    },
-                },
-            }],
+            "fallback": "Быстрый выбор даты",
+            "actions": [
+                {"name": "Сегодня", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_date", "user_id": user_id, "date": today}}},
+                {"name": "Завтра", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_date", "user_id": user_id, "date": tomorrow}}},
+                {"name": "Послезавтра", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_date", "user_id": user_id, "date": after_tomorrow}}},
+                {"name": "Отменить", "style": "danger", "type": "button", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": ButtonActions.CANCEL_WIZARD, "user_id": user_id}}}
+            ]
         }]
-
         post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
-        post_id = None
-        if post:
-            post_id = post.get('id') if isinstance(post, dict) else post
-        
-        self.logic.set_user_state(user_id, "creating_meeting_attendees", state_data, post_id)
+        post_id = post.get('id') if isinstance(post, dict) else post
+        self.logic.set_user_state(user_id, "creating_meeting_date", state_data, post_id)
         
         self.logic.set_user_state(user_id, "creating_meeting_date", state_data, post_id)
     
     async def ask_meeting_time(self, user_id: str, channel_id: str, state_data: Dict):
         """Попросить время начала встречи"""
         message = UIMessages.create_meeting_step_5()
-
+        now = datetime.now()
+        next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0).strftime("%H:%M")
+        plus_60 = (now + timedelta(minutes=60)).strftime("%H:%M")
         attachments = [{
-            "fallback": "Cancel",
-            "actions": [{
-                "name": "Отменить",
-                "style": "danger",
-                "type": "button",
-                "integration": {
-                    "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
-                    "context": {
-                        "action": ButtonActions.CANCEL_WIZARD,
-                        "user_id": user_id,
-                    },
-                },
-            }],
+            "fallback": "Быстрый выбор времени",
+            "actions": [
+                {"name": "В следующий час", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_time", "user_id": user_id, "time": next_hour}}},
+                {"name": "Через час", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_time", "user_id": user_id, "time": plus_60}}},
+                {"name": "Отменить", "style": "danger", "type": "button", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": ButtonActions.CANCEL_WIZARD, "user_id": user_id}}}
+            ]
         }]
-
         post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
-        post_id = None
-        if post:
-            post_id = post.get('id') if isinstance(post, dict) else post
-        
+        post_id = post.get('id') if isinstance(post, dict) else post
         self.logic.set_user_state(user_id, "creating_meeting_time", state_data, post_id)
     
     async def ask_meeting_duration(self, user_id: str, channel_id: str, state_data: Dict):
