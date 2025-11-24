@@ -327,8 +327,8 @@ class CalDAVManager:
                                     # Remove mailto: prefix
                                     if a.lower().startswith('mailto:'):
                                         a = a[7:]
-                                    # Clean up whitespace and newlines
-                                    a = a.strip()
+                                    # Clean up whitespace, newlines, and take first word
+                                    a = a.strip().replace('\n', '').replace('\r', '').split()[0] if a.strip() else ''
                                     if a:
                                         attendees.append(a)
                                 organizer = comp.get('organizer')
@@ -364,9 +364,8 @@ class CalDAVManager:
                           location: str = "") -> bool:
         """Создать событие в CalDAV"""
         try:
-            if not Calendar or not Event:
-                logger.error("icalendar library not available")
-                return False
+            import vobject
+            import uuid
             
             if attendees is None:
                 attendees = []
@@ -378,80 +377,71 @@ class CalDAVManager:
             if isinstance(end, str):
                 end = datetime.fromisoformat(end)
             if start.tzinfo is None:
-                start = tz.localize(start)
+                start = start.replace(tzinfo=tz)
             if end.tzinfo is None:
-                end = tz.localize(end)
+                end = end.replace(tzinfo=tz)
             
-            from icalendar import vCalAddress, vText
+            # Get calendar using python-caldav
+            calendars = await self.get_calendars()
+            if not calendars:
+                logger.error("No calendars found")
+                return False
             
-            calendar = Calendar()
-            calendar.add("prodid", "-//MailRu//MailRu Calendar API -//EN")
-            calendar.add("version", "2.0")
+            # Use first calendar (Main/Основной preferred by get_calendars)
+            calendar_url = calendars[0]['url']
             
-            event = Event()
-            uid = f"{datetime.utcnow().timestamp()}@{self.email}"
-            event.add("uid", uid)
-            event.add("summary", title)
+            # Create vobject iCalendar
+            vcal = vobject.iCalendar()
+            vevent = vcal.add('vevent')
             
-            # Add timezone-aware datetime with TZID parameter
-            event.add("dtstart", start, parameters={'TZID': Config.TZ})
-            event.add("dtend", end, parameters={'TZID': Config.TZ})
-            event.add("dtstamp", datetime.utcnow())
-            event.add("created", datetime.utcnow())
-            event.add("last-modified", datetime.utcnow())
-            event.add("status", "CONFIRMED")
-            event.add("transp", "OPAQUE")
+            uid = str(uuid.uuid4())
+            vevent.add('uid').value = uid
+            vevent.add('summary').value = title
+            vevent.add('dtstart').value = start
+            vevent.add('dtend').value = end
+            vevent.add('status').value = 'CONFIRMED'
             
             if description:
-                event.add("description", description)
+                vevent.add('description').value = description
             if location:
-                event.add("location", location)
+                vevent.add('location').value = location
             
-            # Добавить организатора с vCalAddress
-            organizer_addr = vCalAddress(f"mailto:{self.email}")
-            organizer_addr.params['cn'] = vText(self.email)
-            event.add("organizer", organizer_addr)
+            # Add organizer
+            organizer = vevent.add('organizer')
+            organizer.value = f'mailto:{self.email}'
+            organizer.params['CN'] = [self.email]
             
-            # Добавить участников с vCalAddress
-            for attendee_email in attendees:
-                if attendee_email and attendee_email != self.email:
-                    attendee_addr = vCalAddress(f"mailto:{attendee_email}")
-                    attendee_addr.params['role'] = vText('REQ-PARTICIPANT')
-                    attendee_addr.params['partstat'] = vText('NEEDS-ACTION')
-                    attendee_addr.params['rsvp'] = vText('TRUE')
-                    event.add("attendee", attendee_addr)
+            # Add attendees
+            for addr in attendees:
+                if addr and addr != self.email:
+                    att = vevent.add('attendee')
+                    att.value = f'mailto:{addr}'
+                    att.params['CN'] = [addr]
+                    att.params['ROLE'] = ['REQ-PARTICIPANT']
             
-            # Добавить напоминание за Config.REMINDER_MINUTES минут
-            if Alarm:
-                alarm = Alarm()
-                alarm.add("trigger", f"-PT{Config.REMINDER_MINUTES}M")
-                alarm.add("action", "DISPLAY")
-                alarm.add("description", f"Встреча '{title}' через {Config.REMINDER_MINUTES} минут")
-                event.add_component(alarm)
+            # Serialize to iCalendar format
+            ical_str = vcal.serialize()
             
-            # Add VTIMEZONE component
-            from icalendar import Timezone
-            vtimezone = Timezone()
-            vtimezone.add('TZID', Config.TZ)
-            vtimezone.add('TZURL', f'http://tzurl.org/zoneinfo-outlook/{Config.TZ}')
-            vtimezone.add('X-LIC-LOCATION', Config.TZ)
+            # PUT event to calendar
+            event_url = f"{calendar_url.rstrip('/')}/{uid}.ics"
+            headers = {
+                'Content-Type': 'text/calendar; charset=utf-8',
+            }
             
-            # Add STANDARD subcomponent
-            from icalendar import TimezoneStandard
-            standard = TimezoneStandard()
-            standard.add('DTSTART', datetime(1970, 1, 1, 0, 0, 0))
-            standard.add('TZNAME', 'MSK')
-            standard.add('TZOFFSETFROM', pytz.timezone(Config.TZ).utcoffset(datetime.now()))
-            standard.add('TZOFFSETTO', pytz.timezone(Config.TZ).utcoffset(datetime.now()))
-            vtimezone.add_component(standard)
+            response = await self.session.put(
+                event_url,
+                data=ical_str.encode('utf-8'),
+                headers=headers,
+                auth=self.auth
+            )
             
-            calendar.add_component(vtimezone)
-            calendar.add_component(event)
-            
-            # Упрощенная реализация - просто логируем
-            # TODO: Загрузить событие на сервер
-            logger.info(f"Event '{title}' would be created from {start} to {end}")
-            return True
+            if response.status_code in (200, 201, 204):
+                logger.info(f"Event '{title}' created successfully: {uid}")
+                return True
+            else:
+                logger.error(f"Failed to create event: {response.status_code} {response.text}")
+                return False
+                
         except Exception as e:
             logger.error(f"Error creating event: {e}")
             return False
@@ -563,8 +553,8 @@ class CalDAVManager:
                                 # Remove mailto: prefix if present
                                 if addr.lower().startswith("mailto:"):
                                     addr = addr[7:]
-                                # Clean up any trailing/leading whitespace or newlines
-                                addr = addr.strip()
+                                # Clean up any trailing/leading whitespace, newlines, and split on whitespace
+                                addr = addr.strip().replace('\n', '').replace('\r', '').split()[0] if addr.strip() else ''
                                 if addr:
                                     attendees.append(addr)
                             organizer = component.get("organizer")
@@ -683,8 +673,8 @@ class CalDAVManager:
                                 attendees = []
                                 for att_match in re.finditer(r"^ATTENDEE[^:]*:mailto:(.+)$", vevent_raw, re.MULTILINE):
                                     email = att_match.group(1).strip()
-                                    # Remove any trailing/leading whitespace or newlines
-                                    email = email.split()[0] if email else ""
+                                    # Remove any trailing/leading whitespace, newlines, and take first word
+                                    email = email.replace('\n', '').replace('\r', '').split()[0] if email else ""
                                     if email:
                                         attendees.append(email)
                                 
@@ -692,7 +682,7 @@ class CalDAVManager:
                                 organizer = ""
                                 org_match = re.search(r"^ORGANIZER[^:]*:mailto:(.+)$", vevent_raw, re.MULTILINE)
                                 if org_match:
-                                    organizer = org_match.group(1).strip().split()[0]
+                                    organizer = org_match.group(1).strip().replace('\n', '').replace('\r', '').split()[0]
                                 
                                 # Extract description and location
                                 description = rex("DESCRIPTION")

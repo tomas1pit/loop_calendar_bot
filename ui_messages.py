@@ -58,7 +58,8 @@ https://account.mail.ru/user/2-step-auth/passwords/
     @staticmethod
     def meeting_details(title: str, start: datetime, end: datetime, 
                        attendees: list, description: str = "", 
-                       location: str = "", status: str = "ACCEPTED") -> str:
+                       location: str = "", status: str = "ACCEPTED",
+                       organizer_email: str = "") -> str:
         from_time = start.strftime("%d.%m.%Y %H:%M")
         to_time = end.strftime("%H:%M")
         
@@ -80,8 +81,13 @@ https://account.mail.ru/user/2-step-auth/passwords/
 **Участники:**
 """
         if attendees:
+            organizer_lower = organizer_email.lower() if organizer_email else ""
             for attendee in attendees:
-                message += f"• {attendee}\n"
+                attendee_lower = attendee.lower() if isinstance(attendee, str) else ""
+                if organizer_lower and attendee_lower == organizer_lower:
+                    message += f"• {attendee} (организатор)\n"
+                else:
+                    message += f"• {attendee}\n"
         else:
             message += "_Нет участников_\n"
         

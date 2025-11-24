@@ -324,6 +324,7 @@ class ActionHandler:
             description = meeting.get("description", "")
             location = meeting.get("location", "")
             status = meeting.get("status", "ACCEPTED")
+            organizer = meeting.get("organizer", "")
 
             message = UIMessages.meeting_details(
                 meeting.get("title", "Без названия"),
@@ -333,6 +334,7 @@ class ActionHandler:
                 description,
                 location,
                 status,
+                organizer,
             )
 
             await self.bot.mm.send_message(channel_id, message)
