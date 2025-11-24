@@ -73,14 +73,17 @@ https://account.mail.ru/user/2-step-auth/passwords/
         }
         status_display = status_map.get(status.upper(), status)
         
-        message = f"""**{title}**
+        message = f"""**Название встречи:** {title}
 
 **Когда:** {from_time} - {to_time}
 
 **Участники:**
 """
-        for attendee in attendees:
-            message += f"• {attendee}\n"
+        if attendees:
+            for attendee in attendees:
+                message += f"• {attendee}\n"
+        else:
+            message += "_Нет участников_\n"
         
         if description:
             message += f"\n**Описание:**\n{description}"

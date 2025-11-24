@@ -271,19 +271,13 @@ class Bot:
         
         elif current_state == "creating_meeting_title":
             state_data['title'] = message.strip()
-            # Очистить кнопки предыдущего сообщения
-            if user_state.message_id:
-                try:
-                    await self.mm.update_post(user_state.message_id, f"Как назвать встречу? ✅ {message.strip()}")
-                except Exception:
-                    pass
             await self.ask_meeting_date(user_id, channel_id, state_data)
         
         elif current_state == "creating_meeting_date":
             date_obj = self.logic.validate_date(message.strip())
             if date_obj:
                 state_data['date'] = date_obj.isoformat()
-                # Очистить кнопки
+                # Очистить кнопки предыдущего сообщения
                 if user_state.message_id:
                     try:
                         await self.mm.update_post(user_state.message_id, f"Дата встречи: ✅ {message.strip()}")
@@ -380,9 +374,12 @@ class Bot:
         }]
 
         post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
-        post_id = post.get('id') if post else None
+        post_id = None
+        if post:
+            post_id = post.get('id') if isinstance(post, dict) else post
         
         self.logic.set_user_state(user_id, "creating_meeting_attendees", state_data, post_id)
+        
         self.logic.set_user_state(user_id, "creating_meeting_date", state_data, post_id)
     
     async def ask_meeting_time(self, user_id: str, channel_id: str, state_data: Dict):
@@ -406,7 +403,9 @@ class Bot:
         }]
 
         post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
-        post_id = post.get('id') if post else None
+        post_id = None
+        if post:
+            post_id = post.get('id') if isinstance(post, dict) else post
         
         self.logic.set_user_state(user_id, "creating_meeting_time", state_data, post_id)
     
@@ -431,7 +430,9 @@ class Bot:
         }]
 
         post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
-        post_id = post.get('id') if post else None
+        post_id = None
+        if post:
+            post_id = post.get('id') if isinstance(post, dict) else post
         
         self.logic.set_user_state(user_id, "creating_meeting_duration", state_data, post_id)
     
@@ -470,8 +471,12 @@ class Bot:
             ],
         }]
 
-        await self.mm.create_post_with_attachments(channel_id, message, attachments)
-        self.logic.set_user_state(user_id, "creating_meeting_attendees", state_data)
+        post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
+        post_id = None
+        if post:
+            post_id = post.get('id') if isinstance(post, dict) else post
+        
+        self.logic.set_user_state(user_id, "creating_meeting_attendees", state_data, post_id)
     
     async def ask_meeting_description(self, user_id: str, channel_id: str, state_data: Dict):
         """Попросить описание встречи"""
@@ -507,7 +512,9 @@ class Bot:
         }]
         
         post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
-        post_id = post.get('id') if post else None
+        post_id = None
+        if post:
+            post_id = post.get('id') if isinstance(post, dict) else post
         
         self.logic.set_user_state(user_id, "creating_meeting_description", state_data, post_id)
     
@@ -545,7 +552,9 @@ class Bot:
         }]
         
         post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
-        post_id = post.get('id') if post else None
+        post_id = None
+        if post:
+            post_id = post.get('id') if isinstance(post, dict) else post
         
         self.logic.set_user_state(user_id, "creating_meeting_location", state_data, post_id)
     

@@ -223,6 +223,13 @@ class ActionHandler:
             
             state_data['description'] = ""
             
+            # Очистить кнопки предыдущего сообщения
+            if user_state.message_id:
+                try:
+                    await self.bot.mm.update_post(user_state.message_id, "Описание: ✅ _пропущено_")
+                except Exception:
+                    pass
+            
             # Перейти к вопросу про место
             await self.bot.ask_meeting_location(user_id, channel_id, state_data)
         
@@ -238,6 +245,13 @@ class ActionHandler:
             
             state_data['location'] = ""
             
+            # Очистить кнопки предыдущего сообщения
+            if user_state.message_id:
+                try:
+                    await self.bot.mm.update_post(user_state.message_id, "Место: ✅ _пропущено_")
+                except Exception:
+                    pass
+            
             # Создать встречу
             await self.bot.create_meeting(user_id, channel_id, state_data)
         
@@ -252,6 +266,13 @@ class ActionHandler:
             state_data = json.loads(user_state.data) if user_state and user_state.data else {}
 
             state_data['attendees'] = []
+            
+            # Очистить кнопки предыдущего сообщения
+            if user_state.message_id:
+                try:
+                    await self.bot.mm.update_post(user_state.message_id, "Участники: ✅ _без участников_")
+                except Exception:
+                    pass
 
             # Переходим сразу к описанию встречи
             await self.bot.ask_meeting_description(user_id, channel_id, state_data)
