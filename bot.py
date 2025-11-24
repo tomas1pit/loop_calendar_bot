@@ -21,28 +21,40 @@ logger = logging.getLogger(__name__)
 
 
 class Bot:
-        async def ask_meeting_title(self, user_id: str, channel_id: str, state_data: Dict = None):
-            """Попросить название встречи с кнопкой Отменить"""
-            message = UIMessages.create_meeting_step_1()
-            attachments = [{
-                "fallback": "Cancel",
-                "actions": [{
-                    "name": "Отменить",
-                    "style": "danger",
-                    "type": "button",
-                    "integration": {
-                        "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
-                        "context": {
-                            "action": ButtonActions.CANCEL_WIZARD,
-                            "user_id": user_id,
-                        },
-                    },
-                }],
-            }]
-            post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
-            post_id = post.get('id') if isinstance(post, dict) else post
-            self.logic.set_user_state(user_id, "creating_meeting_title", state_data or {}, post_id)
     def __init__(self):
+        self.db = DatabaseManager(Config.DB_PATH)
+        self.mm = MattermostManager(Config.MATTERMOST_BASE_URL, 
+                                    Config.MATTERMOST_BOT_TOKEN,
+                                    Config.BOT_NAME)
+        self.logic = BotLogic(self.db, self.mm)
+        self.notification_manager = NotificationManager(self.db, self.mm)
+        self.ws_listener = MattermostWebSocketListener(self)
+        self.running = False
+        self.web_runner = None
+        # Основной event loop будет сохранён при старте
+        self.loop = None
+
+    async def ask_meeting_title(self, user_id: str, channel_id: str, state_data: Dict = None):
+        """Попросить название встречи с кнопкой Отменить"""
+        message = UIMessages.create_meeting_step_1()
+        attachments = [{
+            "fallback": "Cancel",
+            "actions": [{
+                "name": "Отменить",
+                "style": "danger",
+                "type": "button",
+                "integration": {
+                    "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                    "context": {
+                        "action": ButtonActions.CANCEL_WIZARD,
+                        "user_id": user_id,
+                    },
+                },
+            }],
+        }]
+        post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
+        post_id = post.get('id') if isinstance(post, dict) else post
+        self.logic.set_user_state(user_id, "creating_meeting_title", state_data or {}, post_id)
         self.db = DatabaseManager(Config.DB_PATH)
         self.mm = MattermostManager(Config.MATTERMOST_BASE_URL, 
                                     Config.MATTERMOST_BOT_TOKEN,
