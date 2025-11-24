@@ -378,10 +378,17 @@ class CalDAVManager:
                 start = datetime.fromisoformat(start)
             if isinstance(end, str):
                 end = datetime.fromisoformat(end)
+            
+            # Нормализуем timezone - используем localize для правильного TZID
             if start.tzinfo is None:
-                start = start.replace(tzinfo=tz)
+                start = tz.localize(start)
+            else:
+                start = start.astimezone(tz)
+            
             if end.tzinfo is None:
-                end = end.replace(tzinfo=tz)
+                end = tz.localize(end)
+            else:
+                end = end.astimezone(tz)
             
             # Get calendar using python-caldav
             calendars = await self.get_calendars()
@@ -399,8 +406,15 @@ class CalDAVManager:
             uid = str(uuid.uuid4())
             vevent.add('uid').value = uid
             vevent.add('summary').value = title
-            vevent.add('dtstart').value = start
-            vevent.add('dtend').value = end
+            
+            # Add dtstart with TZID parameter
+            dtstart_prop = vevent.add('dtstart')
+            dtstart_prop.value = start
+            
+            # Add dtend with TZID parameter
+            dtend_prop = vevent.add('dtend')
+            dtend_prop.value = end
+            
             vevent.add('dtstamp').value = datetime.utcnow().replace(tzinfo=pytz.UTC)
             vevent.add('created').value = datetime.utcnow().replace(tzinfo=pytz.UTC)
             vevent.add('last-modified').value = datetime.utcnow().replace(tzinfo=pytz.UTC)
