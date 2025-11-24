@@ -401,7 +401,12 @@ class CalDAVManager:
             vevent.add('summary').value = title
             vevent.add('dtstart').value = start
             vevent.add('dtend').value = end
+            vevent.add('dtstamp').value = datetime.utcnow().replace(tzinfo=pytz.UTC)
+            vevent.add('created').value = datetime.utcnow().replace(tzinfo=pytz.UTC)
+            vevent.add('last-modified').value = datetime.utcnow().replace(tzinfo=pytz.UTC)
             vevent.add('status').value = 'CONFIRMED'
+            vevent.add('sequence').value = 0
+            vevent.add('transp').value = 'OPAQUE'
             
             if description:
                 vevent.add('description').value = description
@@ -444,11 +449,12 @@ class CalDAVManager:
                 auth=auth
             )
             
-            if response.status_code in (200, 201, 204):
+            if response.status in (200, 201, 204):
                 logger.info(f"Event '{title}' created successfully: {uid}")
                 return True
             else:
-                logger.error(f"Failed to create event: {response.status_code} {response.text}")
+                response_text = await response.text()
+                logger.error(f"Failed to create event: {response.status} {response_text}")
                 return False
                 
         except Exception as e:
