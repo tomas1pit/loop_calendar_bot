@@ -37,6 +37,9 @@ class ActionHandler:
             elif action == ButtonActions.LOGOUT:
                 await self.logout_user(user_id, channel_id)
             
+            elif action == ButtonActions.RAW_CALDAV:
+                await self.show_raw_caldav(user_id, channel_id)
+            
             elif action == "skip_description":
                 await self.skip_description(user_id, channel_id)
             
@@ -342,6 +345,48 @@ class ActionHandler:
         except Exception as e:
             logger.error(f"Error showing meeting details: {e}")
             await self.bot.mm.send_message(channel_id, "Ошибка при получении деталей встречи")
+    
+    async def show_raw_caldav(self, user_id: str, channel_id: str):
+        """Показать RAW CalDAV ответ"""
+        try:
+            user = self.bot.logic.get_user(user_id)
+            if not user:
+                await self.bot.mm.send_message(channel_id, "Пожалуйста, авторизуйтесь сначала")
+                return
+            
+            from datetime import datetime, timedelta
+            import pytz
+            
+            # Получить события на сегодня
+            tz = pytz.timezone(self.bot.logic.config.TZ)
+            now = datetime.now(tz)
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            
+            # Создать CalDAV manager
+            from caldav_manager import CalDAVManager
+            caldav_manager = CalDAVManager(
+                user.email,
+                self.bot.logic.encryption.decrypt(user.encrypted_password)
+            )
+            
+            # Получить RAW XML
+            raw_xml = await caldav_manager.get_raw_caldav(start, end)
+            
+            # Отправить в виде code block (разбить на куски если длинный)
+            max_length = 3500
+            if len(raw_xml) > max_length:
+                chunks = [raw_xml[i:i+max_length] for i in range(0, len(raw_xml), max_length)]
+                for i, chunk in enumerate(chunks):
+                    await self.bot.mm.send_message(channel_id, f"```xml\\n{chunk}\\n```")
+            else:
+                await self.bot.mm.send_message(channel_id, f"```xml\\n{raw_xml}\\n```")
+            
+            await caldav_manager.close()
+        
+        except Exception as e:
+            logger.error(f"Error showing raw caldav: {e}")
+            await self.bot.mm.send_message(channel_id, f"Ошибка при получении RAW CalDAV: {e}")
 
 
 async def start_web_server(bot, host: str = "0.0.0.0", port: int = 8080):

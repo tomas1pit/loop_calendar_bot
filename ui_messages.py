@@ -225,6 +225,7 @@ class ButtonActions:
     MEETING_DETAIL = "meeting_detail_"
     SELECT_MEETING = "select_meeting_"
     CANCEL_WIZARD = "cancel_wizard"
+    RAW_CALDAV = "raw_caldav"
 
 
 def create_main_menu_buttons() -> list:

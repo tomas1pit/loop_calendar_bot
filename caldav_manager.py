@@ -6,6 +6,8 @@ from config import Config
 import json
 import hashlib
 import logging
+import vobject
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -428,11 +430,18 @@ class CalDAVManager:
                 'Content-Type': 'text/calendar; charset=utf-8',
             }
             
+            # Initialize session if needed
+            if not self.session:
+                await self.init_session()
+            
+            from aiohttp import BasicAuth
+            auth = BasicAuth(self.email, self.password)
+            
             response = await self.session.put(
                 event_url,
                 data=ical_str.encode('utf-8'),
                 headers=headers,
-                auth=self.auth
+                auth=auth
             )
             
             if response.status_code in (200, 201, 204):
@@ -499,6 +508,17 @@ class CalDAVManager:
                     except Exception:
                         raw_ical = caldata_el.text or ''
                     raw_ical = raw_ical.strip()
+                    # RFC 5545 line unfolding: объединить строки, начинающиеся с пробела
+                    lines = raw_ical.split('\n')
+                    unfolded_lines = []
+                    for line in lines:
+                        if line.startswith(' ') or line.startswith('\t'):
+                            # Продолжение предыдущей строки
+                            if unfolded_lines:
+                                unfolded_lines[-1] += line[1:]  # Убираем первый пробел
+                        else:
+                            unfolded_lines.append(line)
+                    raw_ical = '\n'.join(unfolded_lines)
                     # Убрали подробное превью для снижения шума
                     cleaned = ''.join(ch for ch in raw_ical if ch in ('\n','\r') or ord(ch) >= 32)
                     ical_blocks.append(cleaned)
@@ -737,6 +757,44 @@ class CalDAVManager:
         except Exception as e:
             logger.error(f"Error parsing CalDAV events XML: {e}")
         return events
+    
+    async def get_raw_caldav(self, start: datetime, end: datetime) -> str:
+        """Получить RAW CalDAV XML ответ"""
+        try:
+            calendars = await self.get_calendars()
+            if not calendars:
+                return "No calendars found"
+            
+            calendar_url = calendars[0]['url']
+            query_xml = self._build_calendar_query(start, end)
+            
+            if not self.session:
+                await self.init_session()
+            
+            from aiohttp import BasicAuth
+            auth = BasicAuth(self.email, self.password)
+            
+            headers = {
+                'Content-Type': 'application/xml; charset=utf-8',
+                'Depth': '1'
+            }
+            
+            response = await self.session.request(
+                'REPORT',
+                calendar_url,
+                data=query_xml.encode('utf-8'),
+                headers=headers,
+                auth=auth
+            )
+            
+            if response.status == 207:
+                xml_text = await response.text()
+                return xml_text
+            else:
+                return f"Error: HTTP {response.status}\n{await response.text()}"
+        except Exception as e:
+            logger.error(f"Error getting raw CalDAV: {e}")
+            return f"Error: {e}"
     
     @staticmethod
     def hash_event(event: Dict) -> str:
