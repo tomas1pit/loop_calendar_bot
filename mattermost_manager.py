@@ -185,3 +185,30 @@ class MattermostManager:
         except Exception as e:
             logger.error(f"Error getting channel: {e}")
             return None
+    
+    async def update_post(self, post_id: str, message: str, props: Dict = None) -> Optional[Dict]:
+        """Обновить пост (для очистки кнопок)"""
+        try:
+            session = await self._ensure_session()
+            update_data = {
+                'id': post_id,
+                'message': message
+            }
+            if props is not None:
+                update_data['props'] = props
+            else:
+                # Очищаем props (кнопки)
+                update_data['props'] = {}
+            
+            async with session.put(
+                f"{self.base_url}/api/v4/posts/{post_id}",
+                headers=self._get_headers(),
+                json=update_data,
+                ssl=False
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                return None
+        except Exception as e:
+            logger.error(f"Error updating post: {e}")
+            return None

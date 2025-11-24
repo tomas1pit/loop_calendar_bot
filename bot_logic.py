@@ -137,6 +137,9 @@ class BotLogic:
                 end_dt = datetime.fromisoformat(end_iso) if end_iso else start_dt
                 time_str = f"{start_dt.strftime('%d.%m %H:%M')}–{end_dt.strftime('%H:%M')}"
                 status = ev.get("status") or "CONFIRMED"
+                # Исключаем отменённые встречи из списка
+                if status.upper() == "CANCELLED":
+                    continue
                 normalized.append({
                     "uid": ev.get("uid", ""),
                     "title": title,
@@ -173,7 +176,9 @@ class BotLogic:
             try:
                 start_dt = datetime.fromisoformat(m["start_time"])
                 end_dt = datetime.fromisoformat(m["end_time"])
-                if end_dt >= now:
+                status = (m.get("status") or "").upper()
+                # Исключаем отменённые встречи
+                if end_dt >= now and status != "CANCELLED":
                     result.append(m)
             except Exception:
                 continue
@@ -184,17 +189,12 @@ class BotLogic:
         if not meetings:
             return "Встреч не найдено"
         status_map = {
-            "ACCEPTED": "✅",
-            "DECLINED": "❌",
-            "TENTATIVE": "❓",
-            "NEEDS-ACTION": "⏳",
-            "CONFIRMED": "✅",
-            "CANCELLED": "🚫",
-            # Русские варианты на случай локализации
-            "ПРИНЯТО": "✅",
-            "ОТКЛОНЕНО": "❌",
-            "ВОЗМОЖНО": "❓",
-            "ОЖИДАЕТ ДЕЙСТВИЯ": "⏳",
+            "ACCEPTED": "✅ Принято",
+            "DECLINED": "❌ Отклонено",
+            "TENTATIVE": "❓ Возможно",
+            "NEEDS-ACTION": "⏳ Ожидает",
+            "CONFIRMED": "✅ Подтверждено",
+            "CANCELLED": "🚫 Отменено",
         }
         table = "| Встреча | Время | Статус |\n|---------|-------|--------|\n"
         for meeting in meetings:

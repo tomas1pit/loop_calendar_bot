@@ -216,17 +216,40 @@ class NotificationManager:
             now_second_ok = (now.second == 0)
             for event in events:
                 start_time = datetime.fromisoformat(event.get('start_time', ''))
-                time_until_sec = int((start_time - now).total_seconds())
-                # Триггер: ровно за Config.REMINDER_MINUTES минут и в 00 секунд
-                target_seconds = Config.REMINDER_MINUTES * 60
-                if time_until_sec == target_seconds and now_second_ok:
-                    message = UIMessages.reminder_notification(
-                        event.get('title', ''),
-                        start_time,
-                        event.get('location', '')
-                    )
-                    await self.mm.send_message(channel_id, message)
-                    reminder_count += 1
+                
+                # Check VALARM alarms first
+                alarms = event.get('alarms', [])
+                for alarm_iso in alarms:
+                    try:
+                        alarm_dt = datetime.fromisoformat(alarm_iso)
+                        # Normalize to minute precision
+                        alarm_minute = alarm_dt.replace(second=0, microsecond=0)
+                        now_minute = now.replace(second=0, microsecond=0)
+                        if alarm_minute == now_minute and now_second_ok:
+                            message = UIMessages.reminder_notification(
+                                event.get('title', ''),
+                                start_time,
+                                event.get('location', '')
+                            )
+                            await self.mm.send_message(channel_id, message)
+                            reminder_count += 1
+                            break  # Only send one reminder per event per minute
+                    except Exception as alarm_err:
+                        logger.debug(f"Failed to process alarm {alarm_iso}: {alarm_err}")
+                        continue
+                
+                # Fallback: Config.REMINDER_MINUTES if no alarms
+                if not alarms:
+                    time_until_sec = int((start_time - now).total_seconds())
+                    target_seconds = Config.REMINDER_MINUTES * 60
+                    if time_until_sec == target_seconds and now_second_ok:
+                        message = UIMessages.reminder_notification(
+                            event.get('title', ''),
+                            start_time,
+                            event.get('location', '')
+                        )
+                        await self.mm.send_message(channel_id, message)
+                        reminder_count += 1
         
         except Exception as e:
             logger.error(f"Error checking reminders: {e}")

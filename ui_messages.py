@@ -62,6 +62,17 @@ https://account.mail.ru/user/2-step-auth/passwords/
         from_time = start.strftime("%d.%m.%Y %H:%M")
         to_time = end.strftime("%H:%M")
         
+        # Маппинг статусов на emoji + текст
+        status_map = {
+            "ACCEPTED": "✅ Принято",
+            "DECLINED": "❌ Отклонено",
+            "TENTATIVE": "❓ Возможно",
+            "NEEDS-ACTION": "⏳ Ожидает действия",
+            "CONFIRMED": "✅ Подтверждено",
+            "CANCELLED": "🚫 Отменено",
+        }
+        status_display = status_map.get(status.upper(), status)
+        
         message = f"""**{title}**
 
 **Когда:** {from_time} - {to_time}
@@ -77,7 +88,7 @@ https://account.mail.ru/user/2-step-auth/passwords/
         if location:
             message += f"\n\n**Где:**\n{location}"
         
-        message += f"\n\n**Ваш статус:** {status}"
+        message += f"\n\n**Ваш статус:** {status_display}"
         
         return message
     

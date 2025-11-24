@@ -367,6 +367,17 @@ class CalDAVManager:
             if attendees is None:
                 attendees = []
             
+            # Убедимся что start и end - timezone-aware datetime
+            tz = pytz.timezone(Config.TZ)
+            if isinstance(start, str):
+                start = datetime.fromisoformat(start)
+            if isinstance(end, str):
+                end = datetime.fromisoformat(end)
+            if start.tzinfo is None:
+                start = tz.localize(start)
+            if end.tzinfo is None:
+                end = tz.localize(end)
+            
             calendar = Calendar()
             calendar.add("prodid", "-//Calendar Bot//Calendar//EN")
             calendar.add("version", "2.0")
@@ -528,6 +539,31 @@ class CalDAVManager:
                             description = str(component.get("description", ""))
                             location = str(component.get("location", ""))
                             status = str(component.get("status", "CONFIRMED"))
+                            
+                            # Extract VALARM components
+                            alarms = []
+                            for subcomp in component.walk():
+                                if subcomp.name == "VALARM":
+                                    trigger = subcomp.get("trigger")
+                                    if trigger:
+                                        try:
+                                            # TRIGGER can be absolute datetime or relative duration
+                                            if hasattr(trigger, 'dt'):
+                                                # Absolute datetime
+                                                alarm_dt = trigger.dt
+                                                if isinstance(alarm_dt, datetime):
+                                                    if alarm_dt.tzinfo is None:
+                                                        alarm_dt = tz.localize(alarm_dt)
+                                                    else:
+                                                        alarm_dt = alarm_dt.astimezone(tz)
+                                                    alarms.append(alarm_dt.isoformat())
+                                            elif hasattr(trigger, 'td'):
+                                                # Relative timedelta (e.g., -PT15M)
+                                                alarm_dt = dtstart + trigger.td
+                                                alarms.append(alarm_dt.isoformat())
+                                        except Exception as alarm_err:
+                                            logger.debug(f"Failed to parse VALARM trigger: {alarm_err}")
+                            
                             events.append({
                                 "uid": uid,
                                 "title": title,
@@ -538,6 +574,7 @@ class CalDAVManager:
                                 "location": location,
                                 "organizer": organizer_email,
                                 "status": status,
+                                "alarms": alarms,
                             })
                             # Без подробного лога добавления события
                         except Exception as ve_inner:
@@ -605,6 +642,33 @@ class CalDAVManager:
                                     tz_parsed_e = tz_local
                                 dtend = tz_parsed_e.localize(dtend)
                             if dtstart and dtend:
+                                # Extract VALARM triggers from regex
+                                alarms = []
+                                for valarm_match in re.finditer(r"BEGIN:VALARM(.*?)END:VALARM", vevent_raw, re.DOTALL):
+                                    valarm_content = valarm_match.group(1)
+                                    trigger_m = re.search(r"^TRIGGER[^:]*:(.+)$", valarm_content, re.MULTILINE)
+                                    if trigger_m:
+                                        trigger_val = trigger_m.group(1).strip()
+                                        # Parse relative duration (e.g., -PT15M)
+                                        if trigger_val.startswith("-PT") or trigger_val.startswith("PT"):
+                                            try:
+                                                # Simple parser for -PT<N>M or -PT<N>H format
+                                                is_negative = trigger_val.startswith("-")
+                                                clean = trigger_val.lstrip("-PT").rstrip("HMS")
+                                                if "H" in trigger_val:
+                                                    hours = int(clean)
+                                                    delta = timedelta(hours=hours)
+                                                elif "M" in trigger_val:
+                                                    minutes = int(clean)
+                                                    delta = timedelta(minutes=minutes)
+                                                else:
+                                                    delta = timedelta(0)
+                                                if is_negative:
+                                                    delta = -delta
+                                                alarm_dt = dtstart + delta
+                                                alarms.append(alarm_dt.isoformat())
+                                            except Exception:
+                                                pass
                                 fallback_events.append({
                                     "uid": uid,
                                     "title": summary,
@@ -615,6 +679,7 @@ class CalDAVManager:
                                     "location": "",
                                     "organizer": "",
                                     "status": status,
+                                    "alarms": alarms,
                                 })
                     if fallback_events:
                         events.extend(fallback_events)
