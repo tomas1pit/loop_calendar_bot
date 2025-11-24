@@ -785,7 +785,11 @@ class CalDAVManager:
             if not calendars:
                 return "No calendars found"
             
-            calendar_url = calendars[0]['href']
+            calendar_href = calendars[0]['href']
+            if calendar_href.startswith('http'):  # абсолютный URL
+                calendar_url = calendar_href
+            else:
+                calendar_url = f"{self.base_url.rstrip('/')}{calendar_href}"
             query_xml = self._build_calendar_query(start, end)
             
             if not self.session:

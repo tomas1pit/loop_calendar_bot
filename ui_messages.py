@@ -213,6 +213,16 @@ external@mail.com
             message += f"\nГде: {location}"
         return message
 
+    @staticmethod
+    def meeting_start_notification(title: str, start: datetime, location: str = "") -> str:
+        time_str = start.strftime("%d.%m.%Y %H:%M")
+        message = f"""🚀 Встреча начинается прямо сейчас
+**{title}**
+Начало: {time_str}"""
+        if location:
+            message += f"\nГде: {location}"
+        return message
+
 
 class ButtonActions:
     """Константы для кнопок"""

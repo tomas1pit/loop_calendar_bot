@@ -52,6 +52,14 @@ class ActionHandler:
             elif action == ButtonActions.CANCEL_WIZARD:
                 await self.cancel_wizard(user_id, channel_id)
             
+            elif action == "quick_date":
+                date_value = context.get("date") or (data.get("context", {}) if isinstance(data.get("context"), dict) else {}).get("date")
+                await self.quick_select_date(user_id, channel_id, date_value)
+
+            elif action == "quick_time":
+                time_value = context.get("time") or (data.get("context", {}) if isinstance(data.get("context"), dict) else {}).get("time")
+                await self.quick_select_time(user_id, channel_id, time_value)
+
             elif action == ButtonActions.SELECT_MEETING or (action and action.startswith("select_meeting")):
                 # selected_option может быть либо строкой UID, либо dict {value: UID}
                 selected_raw = context.get("selected_option")
@@ -193,17 +201,58 @@ class ActionHandler:
     async def start_create_meeting(self, user_id: str, channel_id: str):
         """Начать создание встречи"""
         try:
-            from ui_messages import UIMessages
-            
-            message = UIMessages.create_meeting_step_1()
-            await self.bot.mm.send_message(channel_id, message)
-            
-            # Установить состояние
-            self.bot.logic.set_user_state(user_id, "creating_meeting_title")
-        
+            await self.bot.ask_meeting_title(user_id, channel_id, {})
         except Exception as e:
             logger.error(f"Error starting create meeting: {e}")
             await self.bot.mm.send_message(channel_id, "Ошибка при создании встречи")
+
+    async def quick_select_date(self, user_id: str, channel_id: str, date_value: str):
+        """Быстрый выбор даты встречи"""
+        if not date_value:
+            return
+        try:
+            user_state = self.bot.logic.get_user_state(user_id)
+            if not user_state or user_state.state != "creating_meeting_date":
+                return
+            state_data = json.loads(user_state.data) if user_state.data else {}
+            date_obj = self.bot.logic.validate_date(date_value)
+            if not date_obj:
+                await self.bot.mm.send_message(channel_id, "❌ Не удалось распознать дату. Введите вручную DD.MM.YYYY")
+                return
+            state_data['date'] = date_obj.isoformat()
+            if user_state.message_id:
+                try:
+                    await self.bot.mm.update_post(user_state.message_id, f"Дата встречи: ✅ {date_value}")
+                except Exception:
+                    pass
+            await self.bot.ask_meeting_time(user_id, channel_id, state_data)
+        except Exception as e:
+            logger.error(f"Error in quick date selection: {e}")
+            await self.bot.mm.send_message(channel_id, "Ошибка при выборе даты")
+
+    async def quick_select_time(self, user_id: str, channel_id: str, time_value: str):
+        """Быстрый выбор времени встречи"""
+        if not time_value:
+            return
+        try:
+            user_state = self.bot.logic.get_user_state(user_id)
+            if not user_state or user_state.state != "creating_meeting_time":
+                return
+            state_data = json.loads(user_state.data) if user_state.data else {}
+            time_obj = self.bot.logic.validate_time(time_value)
+            if not time_obj:
+                await self.bot.mm.send_message(channel_id, "❌ Не удалось распознать время. Введите вручную HH:MM")
+                return
+            state_data['time'] = time_obj.isoformat()
+            if user_state.message_id:
+                try:
+                    await self.bot.mm.update_post(user_state.message_id, f"Время начала: ✅ {time_value}")
+                except Exception:
+                    pass
+            await self.bot.ask_meeting_duration(user_id, channel_id, state_data)
+        except Exception as e:
+            logger.error(f"Error in quick time selection: {e}")
+            await self.bot.mm.send_message(channel_id, "Ошибка при выборе времени")
     
     async def logout_user(self, user_id: str, channel_id: str):
         """Разлогинить пользователя"""

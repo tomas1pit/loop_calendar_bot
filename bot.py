@@ -411,16 +411,14 @@ class Bot:
         attachments = [{
             "fallback": "Быстрый выбор даты",
             "actions": [
-                {"name": "Сегодня", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_date", "user_id": user_id, "date": today}}},
-                {"name": "Завтра", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_date", "user_id": user_id, "date": tomorrow}}},
-                {"name": "Послезавтра", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_date", "user_id": user_id, "date": after_tomorrow}}},
+                {"name": "Сегодня", "type": "button", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_date", "user_id": user_id, "date": today}}},
+                {"name": "Завтра", "type": "button", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_date", "user_id": user_id, "date": tomorrow}}},
+                {"name": "Послезавтра", "type": "button", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_date", "user_id": user_id, "date": after_tomorrow}}},
                 {"name": "Отменить", "style": "danger", "type": "button", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": ButtonActions.CANCEL_WIZARD, "user_id": user_id}}}
             ]
         }]
         post = await self.mm.create_post_with_attachments(channel_id, message, attachments)
         post_id = post.get('id') if isinstance(post, dict) else post
-        self.logic.set_user_state(user_id, "creating_meeting_date", state_data, post_id)
-        
         self.logic.set_user_state(user_id, "creating_meeting_date", state_data, post_id)
     
     async def ask_meeting_time(self, user_id: str, channel_id: str, state_data: Dict):
@@ -432,8 +430,8 @@ class Bot:
         attachments = [{
             "fallback": "Быстрый выбор времени",
             "actions": [
-                {"name": "В следующий час", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_time", "user_id": user_id, "time": next_hour}}},
-                {"name": "Через час", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_time", "user_id": user_id, "time": plus_60}}},
+                {"name": "В следующий час", "type": "button", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_time", "user_id": user_id, "time": next_hour}}},
+                {"name": "Через час", "type": "button", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": "quick_time", "user_id": user_id, "time": plus_60}}},
                 {"name": "Отменить", "style": "danger", "type": "button", "integration": {"url": f"{Config.MM_ACTIONS_URL}/mattermost/actions", "context": {"action": ButtonActions.CANCEL_WIZARD, "user_id": user_id}}}
             ]
         }]

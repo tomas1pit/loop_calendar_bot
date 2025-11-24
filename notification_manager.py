@@ -28,7 +28,6 @@ class NotificationManager:
         """
         notification_count = 0
         now_global = datetime.now(self.tz)
-        second_ok = (now_global.second == 0)
         
         for user in users:
             try:
@@ -52,30 +51,35 @@ class NotificationManager:
                 # Получить кэшированные события
                 cached_events = self._get_cached_events(user.mattermost_id, today, tomorrow_end)
                 
-                # Найти добавленные события (только в 00 секунд)
-                if second_ok:
-                    for event in current_events:
-                        if not self._is_event_cached(event, cached_events):
-                            if self._is_today_or_tomorrow(event, today):
-                                await self._notify_new_meeting(user, event)
-                                notification_count += 1
+                # Найти добавленные события
+                for event in current_events:
+                    if (event.get('status', '').upper() == 'CANCELLED'):
+                        continue
+                    if not self._is_event_cached(event, cached_events):
+                        if self._is_today_or_tomorrow(event, today):
+                            await self._notify_new_meeting(user, event)
+                            notification_count += 1
                 
-                # Найти удаленные или отмененные события (только в 00 секунд)
-                if second_ok:
-                    for cached in cached_events:
-                        if cached.status != "CANCELLED" and not self._is_event_in_current(cached, current_events):
-                            if self._is_today_or_tomorrow_from_cache(cached, today):
-                                await self._notify_cancelled_meeting(user, cached)
-                                notification_count += 1
+                # Найти удаленные или отмененные события
+                for cached in cached_events:
+                    if cached.status == "CANCELLED":
+                        continue
+                    if not self._is_event_in_current(cached, current_events):
+                        if self._is_today_or_tomorrow_from_cache(cached, today):
+                            await self._notify_cancelled_meeting(user, cached)
+                            notification_count += 1
                 
-                # Найти перенесенные события (только в 00 секунд)
-                if second_ok:
-                    for cached in cached_events:
-                        current_version = self._find_event_by_uid(cached.uid, current_events)
-                        if current_version and self._event_changed_time(cached, current_version):
-                            if self._is_today_or_tomorrow(current_version, today):
-                                await self._notify_rescheduled_meeting(user, cached, current_version)
-                                notification_count += 1
+                # Найти перенесенные события
+                for cached in cached_events:
+                    current_version = self._find_event_by_uid(cached.uid, current_events)
+                    if not current_version:
+                        continue
+                    if current_version.get('status', '').upper() == 'CANCELLED':
+                        continue
+                    if self._event_changed_time(cached, current_version):
+                        if self._is_today_or_tomorrow(current_version, today):
+                            await self._notify_rescheduled_meeting(user, cached, current_version)
+                            notification_count += 1
                 
                 # Обновить кэш
                 self._update_events_cache(user.mattermost_id, current_events)
@@ -212,20 +216,27 @@ class NotificationManager:
             
             now = datetime.now(self.tz)
             reminder_delta = timedelta(minutes=Config.REMINDER_MINUTES)
-            
-            now_second_ok = (now.second == 0)
+            check_window = max(5, Config.CHECK_INTERVAL)
             for event in events:
                 start_time = datetime.fromisoformat(event.get('start_time', ''))
+                if start_time.tzinfo:
+                    start_time = start_time.astimezone(self.tz)
+                else:
+                    start_time = self.tz.localize(start_time)
                 
                 # Check VALARM alarms first
                 alarms = event.get('alarms', [])
+                alarm_triggered = False
                 for alarm_iso in alarms:
                     try:
                         alarm_dt = datetime.fromisoformat(alarm_iso)
+                        if alarm_dt.tzinfo:
+                            alarm_dt = alarm_dt.astimezone(self.tz)
+                        else:
+                            alarm_dt = self.tz.localize(alarm_dt)
                         # Normalize to minute precision
-                        alarm_minute = alarm_dt.replace(second=0, microsecond=0)
-                        now_minute = now.replace(second=0, microsecond=0)
-                        if alarm_minute == now_minute and now_second_ok:
+                        delta_alarm = (alarm_dt - now).total_seconds()
+                        if 0 <= delta_alarm < check_window:
                             message = UIMessages.reminder_notification(
                                 event.get('title', ''),
                                 start_time,
@@ -233,16 +244,19 @@ class NotificationManager:
                             )
                             await self.mm.send_message(channel_id, message)
                             reminder_count += 1
-                            break  # Only send one reminder per event per minute
+                            alarm_triggered = True
+                            break  # Only send одно напоминание по VALARM
                     except Exception as alarm_err:
                         logger.debug(f"Failed to process alarm {alarm_iso}: {alarm_err}")
                         continue
-                
-                # Fallback: Config.REMINDER_MINUTES if no alarms
-                if not alarms:
-                    time_until_sec = int((start_time - now).total_seconds())
-                    target_seconds = Config.REMINDER_MINUTES * 60
-                    if time_until_sec == target_seconds and now_second_ok:
+
+                if alarm_triggered:
+                    continue
+
+                # Fallback: REMINDER_MINUTES (если нет VALARM или не сработало)
+                if Config.REMINDER_MINUTES > 0 and not alarms:
+                    delta_to_reminder = (start_time - now - reminder_delta).total_seconds()
+                    if 0 <= delta_to_reminder < check_window:
                         message = UIMessages.reminder_notification(
                             event.get('title', ''),
                             start_time,
@@ -250,6 +264,18 @@ class NotificationManager:
                         )
                         await self.mm.send_message(channel_id, message)
                         reminder_count += 1
+                        continue
+
+                # Напоминание в момент начала встречи
+                delta_to_start = (start_time - now).total_seconds()
+                if 0 <= delta_to_start < check_window:
+                    message = UIMessages.meeting_start_notification(
+                        event.get('title', ''),
+                        start_time,
+                        event.get('location', '')
+                    )
+                    await self.mm.send_message(channel_id, message)
+                    reminder_count += 1
         
         except Exception as e:
             logger.error(f"Error checking reminders: {e}")
