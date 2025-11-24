@@ -324,9 +324,13 @@ class CalDAVManager:
                                 attendees: List[str] = []
                                 for att in comp.get_all('attendee', []):
                                     a = str(att)
+                                    # Remove mailto: prefix
                                     if a.lower().startswith('mailto:'):
                                         a = a[7:]
-                                    attendees.append(a)
+                                    # Clean up whitespace and newlines
+                                    a = a.strip()
+                                    if a:
+                                        attendees.append(a)
                                 organizer = comp.get('organizer')
                                 organizer_email = ''
                                 if organizer:
@@ -378,33 +382,44 @@ class CalDAVManager:
             if end.tzinfo is None:
                 end = tz.localize(end)
             
+            from icalendar import vCalAddress, vText
+            
             calendar = Calendar()
-            calendar.add("prodid", "-//Calendar Bot//Calendar//EN")
+            calendar.add("prodid", "-//MailRu//MailRu Calendar API -//EN")
             calendar.add("version", "2.0")
-            calendar.add("calscale", "GREGORIAN")
             
             event = Event()
             uid = f"{datetime.utcnow().timestamp()}@{self.email}"
             event.add("uid", uid)
             event.add("summary", title)
-            event.add("dtstart", start)
-            event.add("dtend", end)
+            
+            # Add timezone-aware datetime with TZID parameter
+            event.add("dtstart", start, parameters={'TZID': Config.TZ})
+            event.add("dtend", end, parameters={'TZID': Config.TZ})
             event.add("dtstamp", datetime.utcnow())
             event.add("created", datetime.utcnow())
             event.add("last-modified", datetime.utcnow())
+            event.add("status", "CONFIRMED")
+            event.add("transp", "OPAQUE")
             
             if description:
                 event.add("description", description)
             if location:
                 event.add("location", location)
             
-            # Добавить организатора
-            event.add("organizer", f"mailto:{self.email}")
+            # Добавить организатора с vCalAddress
+            organizer_addr = vCalAddress(f"mailto:{self.email}")
+            organizer_addr.params['cn'] = vText(self.email)
+            event.add("organizer", organizer_addr)
             
-            # Добавить участников
-            for attendee in attendees:
-                if attendee != self.email:
-                    event.add("attendee", f"mailto:{attendee}")
+            # Добавить участников с vCalAddress
+            for attendee_email in attendees:
+                if attendee_email and attendee_email != self.email:
+                    attendee_addr = vCalAddress(f"mailto:{attendee_email}")
+                    attendee_addr.params['role'] = vText('REQ-PARTICIPANT')
+                    attendee_addr.params['partstat'] = vText('NEEDS-ACTION')
+                    attendee_addr.params['rsvp'] = vText('TRUE')
+                    event.add("attendee", attendee_addr)
             
             # Добавить напоминание за Config.REMINDER_MINUTES минут
             if Alarm:
@@ -414,6 +429,23 @@ class CalDAVManager:
                 alarm.add("description", f"Встреча '{title}' через {Config.REMINDER_MINUTES} минут")
                 event.add_component(alarm)
             
+            # Add VTIMEZONE component
+            from icalendar import Timezone
+            vtimezone = Timezone()
+            vtimezone.add('TZID', Config.TZ)
+            vtimezone.add('TZURL', f'http://tzurl.org/zoneinfo-outlook/{Config.TZ}')
+            vtimezone.add('X-LIC-LOCATION', Config.TZ)
+            
+            # Add STANDARD subcomponent
+            from icalendar import TimezoneStandard
+            standard = TimezoneStandard()
+            standard.add('DTSTART', datetime(1970, 1, 1, 0, 0, 0))
+            standard.add('TZNAME', 'MSK')
+            standard.add('TZOFFSETFROM', pytz.timezone(Config.TZ).utcoffset(datetime.now()))
+            standard.add('TZOFFSETTO', pytz.timezone(Config.TZ).utcoffset(datetime.now()))
+            vtimezone.add_component(standard)
+            
+            calendar.add_component(vtimezone)
             calendar.add_component(event)
             
             # Упрощенная реализация - просто логируем
@@ -526,10 +558,15 @@ class CalDAVManager:
                                 dtend = dtend.astimezone(tz)
                             attendees: List[str] = []
                             for att in component.get_all("attendee", []):
+                                # att is vCalAddress object with params and value
                                 addr = str(att)
+                                # Remove mailto: prefix if present
                                 if addr.lower().startswith("mailto:"):
                                     addr = addr[7:]
-                                attendees.append(addr)
+                                # Clean up any trailing/leading whitespace or newlines
+                                addr = addr.strip()
+                                if addr:
+                                    attendees.append(addr)
                             organizer = component.get("organizer")
                             organizer_email = ""
                             if organizer:
@@ -642,6 +679,25 @@ class CalDAVManager:
                                     tz_parsed_e = tz_local
                                 dtend = tz_parsed_e.localize(dtend)
                             if dtstart and dtend:
+                                # Extract ATTENDEE emails from regex
+                                attendees = []
+                                for att_match in re.finditer(r"^ATTENDEE[^:]*:mailto:(.+)$", vevent_raw, re.MULTILINE):
+                                    email = att_match.group(1).strip()
+                                    # Remove any trailing/leading whitespace or newlines
+                                    email = email.split()[0] if email else ""
+                                    if email:
+                                        attendees.append(email)
+                                
+                                # Extract ORGANIZER email
+                                organizer = ""
+                                org_match = re.search(r"^ORGANIZER[^:]*:mailto:(.+)$", vevent_raw, re.MULTILINE)
+                                if org_match:
+                                    organizer = org_match.group(1).strip().split()[0]
+                                
+                                # Extract description and location
+                                description = rex("DESCRIPTION")
+                                location = rex("LOCATION")
+                                
                                 # Extract VALARM triggers from regex
                                 alarms = []
                                 for valarm_match in re.finditer(r"BEGIN:VALARM(.*?)END:VALARM", vevent_raw, re.DOTALL):
@@ -674,10 +730,10 @@ class CalDAVManager:
                                     "title": summary,
                                     "start_time": dtstart.isoformat(),
                                     "end_time": dtend.isoformat(),
-                                    "attendees": [],
-                                    "description": "",
-                                    "location": "",
-                                    "organizer": "",
+                                    "attendees": attendees,
+                                    "description": description,
+                                    "location": location,
+                                    "organizer": organizer,
                                     "status": status,
                                     "alarms": alarms,
                                 })
