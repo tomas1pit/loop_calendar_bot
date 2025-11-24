@@ -390,7 +390,7 @@ class CalDAVManager:
                 return False
             
             # Use first calendar (Main/Основной preferred by get_calendars)
-            calendar_url = calendars[0]['url']
+            calendar_url = calendars[0]['href']
             
             # Create vobject iCalendar
             vcal = vobject.iCalendar()
@@ -765,7 +765,7 @@ class CalDAVManager:
             if not calendars:
                 return "No calendars found"
             
-            calendar_url = calendars[0]['url']
+            calendar_url = calendars[0]['href']
             query_xml = self._build_calendar_query(start, end)
             
             if not self.session:
