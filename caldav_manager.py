@@ -419,7 +419,7 @@ class CalDAVManager:
             vevent.add('created').value = datetime.utcnow().replace(tzinfo=pytz.UTC)
             vevent.add('last-modified').value = datetime.utcnow().replace(tzinfo=pytz.UTC)
             vevent.add('status').value = 'CONFIRMED'
-            vevent.add('sequence').value = 0
+            vevent.add('sequence').value = "0"
             vevent.add('transp').value = 'OPAQUE'
             
             if description:
