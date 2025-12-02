@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  loop-calendar-bot:
+    image: loop-calendar_bot:latest
+    container_name: loop-calendar-bot
+    restart: unless-stopped
+    environment:
+      MATTERMOST_BASE_URL: "${MATTERMOST_BASE_URL}"
+      MATTERMOST_BOT_TOKEN: "${MATTERMOST_BOT_TOKEN}"
+      MM_ACTIONS_URL: "${MM_ACTIONS_URL}"
+      CALDAV_BASE_URL: "${CALDAV_BASE_URL}"
+      TZ: "${TZ:-Europe/Moscow}"
+      DB_PATH: "/data/calendar_bot.db"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
+      CHECK_INTERVAL: "${CHECK_INTERVAL:-60}"
+      REMINDER_MINUTES: "${REMINDER_MINUTES:-15}"
+    volumes:
+      - loop-calendar-bot-data:/data
+    networks:
+      - default
+
+networks:
+  default:
+    external: true
+    name: root_default
+
+volumes:
+  loop-calendar-bot-data:
+    driver: local
