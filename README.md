@@ -4,6 +4,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-enabled-blue.svg)](https://www.docker.com/)
 
+> [!CAUTION]
 > **DISCLAIMER:** Проект создавался с использованием ИИ-инструментов. Любое использование кода выполняется на ваш страх и риск в соответствии с [лицензией MIT](LICENSE).
 
 Надежный, простой и минималистичный Mattermost-бот для управления встречами через Mail.ru CalDAV. Бот работает только в личных сообщениях и предоставляет полный набор инструментов для синхронизации календарей.
