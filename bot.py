@@ -267,16 +267,16 @@ class Bot:
                             }
                         }
                     },
-                    {
-                        "name": "RAW CALDAV",
-                        "integration": {
-                            "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
-                            "context": {
-                                "action": ButtonActions.RAW_CALDAV,
-                                "user_id": user_id
-                            }
-                        }
-                    },
+                    # {
+                    #     "name": "RAW CALDAV",
+                    #     "integration": {
+                    #         "url": f"{Config.MM_ACTIONS_URL}/mattermost/actions",
+                    #         "context": {
+                    #             "action": ButtonActions.RAW_CALDAV,
+                    #             "user_id": user_id
+                    #         }
+                    #     }
+                    # },
                     {
                         "name": "Разлогиниться",
                         "integration": {
