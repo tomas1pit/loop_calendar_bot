@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, Boolean
+from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, Boolean, Date
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import os
@@ -47,6 +47,16 @@ class MeetingCache(Base):
     hash_value = Column(String(100))  # Хэш для отслеживания изменений
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DailyDigestLog(Base):
+    """Лог отправленных ежедневных дайджестов"""
+    __tablename__ = "daily_digest_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(50), nullable=False, index=True)
+    digest_date = Column(Date, nullable=False, index=True)
+    sent_at = Column(DateTime, default=datetime.utcnow)
 
 
 class DatabaseManager:

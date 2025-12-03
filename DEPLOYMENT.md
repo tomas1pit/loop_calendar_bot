@@ -1,6 +1,6 @@
 # 🚀 Deployment Guide
 
-Полное руководство по развертыванию Calendar Bot в production.
+Полное руководство по развертыванию Calendar Bot (релиз 1.1.0) в production.
 
 ## 📋 Предварительные требования
 
@@ -38,8 +38,8 @@ python3 -c "from encryption import EncryptionManager; print(EncryptionManager.ge
 
 ```bash
 # Клонировать репозиторий
-git clone https://github.com/USERNAME/calendar_bot.git
-cd calendar_bot
+git clone https://github.com/tomas1pit/loop_calendar_bot.git
+cd loop_calendar_bot
 
 # Создать .env файл
 cp .env.example .env
@@ -79,6 +79,7 @@ docker-compose logs -f loop-calendar-bot
    TZ=Europe/Moscow
    CHECK_INTERVAL=60
    REMINDER_MINUTES=15
+   DAILY_DIGEST_HOUR=9
    ```
 
 ### Option 3: Kubernetes
@@ -106,8 +107,9 @@ docker ps | grep calendar
 # 2. Проверить логи
 docker logs -f loop-calendar-bot
 
-# 3. Проверить подключение к Mattermost
+# 3. Проверить подключение к Mattermost и время дайджеста
 docker exec loop-calendar-bot curl -X GET http://localhost:8080/health
+echo "Дайджест 'Все встречи на сегодня' отправится в ${DAILY_DIGEST_HOUR:-9}:00 по TZ"
 
 # 4. Тест в Mattermost
 # Отправьте личное сообщение: "@calendar_bot"

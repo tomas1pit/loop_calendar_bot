@@ -4,7 +4,7 @@ import json
 from typing import List, Dict, Iterable
 import pytz
 from config import Config
-from database import DatabaseManager, MeetingCache
+from database import DatabaseManager, MeetingCache, DailyDigestLog
 from encryption import EncryptionManager
 from caldav_manager import CalDAVManager
 from mattermost_manager import MattermostManager
@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 class NotificationManager:
-    def __init__(self, db: DatabaseManager, mm: MattermostManager):
+    def __init__(self, db: DatabaseManager, mm: MattermostManager, logic):
         self.db = db
         self.mm = mm
+        self.logic = logic
         self.encryption = EncryptionManager()
         self.tz = pytz.timezone(Config.TZ)
     
@@ -109,6 +110,9 @@ class NotificationManager:
                         await caldav_manager.close()
                     except Exception:
                         pass
+
+                digest_sent = await self._maybe_send_daily_digest(user, password)
+                notification_count += digest_sent
             
             except Exception as e:
                 logger.error(f"Error checking notifications for user {user.mattermost_id}: {e}")
@@ -283,6 +287,59 @@ class NotificationManager:
             logger.error(f"Error checking reminders: {e}")
         
         return reminder_count
+
+    async def _maybe_send_daily_digest(self, user, password: str) -> int:
+        """Отправить дайджест в 09:00, если ещё не был отправлен"""
+        now = datetime.now(self.tz)
+        digest_date = now.date()
+        hour = max(0, min(23, int(getattr(Config, "DAILY_DIGEST_HOUR", 9))))
+        target_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+        if now < target_time:
+            return 0
+        if self._digest_already_sent(user.mattermost_id, digest_date):
+            return 0
+
+        try:
+            meetings = await self.logic.get_today_meetings(
+                user.mattermost_id,
+                user.email,
+                password,
+            )
+        except Exception as err:
+            logger.error(f"Daily digest failed to fetch meetings for {user.email}: {err}")
+            return 0
+
+        channel_id = await self.mm.get_channel_id(user.mattermost_id)
+        if not channel_id:
+            return 0
+
+        table = self.logic.format_meetings_table(meetings)
+        message = UIMessages.daily_digest(now, table)
+        await self.mm.send_message(channel_id, message)
+        self._mark_digest_sent(user.mattermost_id, digest_date)
+        logger.info(f"Daily digest sent to {user.email}")
+        return 1
+
+    def _digest_already_sent(self, user_id: str, digest_date) -> bool:
+        session = self.db.get_session()
+        try:
+            exists = session.query(DailyDigestLog).filter_by(
+                user_id=user_id,
+                digest_date=digest_date,
+            ).first()
+            return exists is not None
+        finally:
+            session.close()
+
+    def _mark_digest_sent(self, user_id: str, digest_date):
+        session = self.db.get_session()
+        try:
+            log = DailyDigestLog(user_id=user_id, digest_date=digest_date)
+            session.add(log)
+            session.commit()
+        finally:
+            session.close()
     
     async def _notify_new_meeting(self, user, event: Dict):
         """Отправить уведомление о новой встрече"""

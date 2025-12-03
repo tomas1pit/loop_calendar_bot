@@ -29,7 +29,7 @@ class Bot:
                                     Config.MATTERMOST_BOT_TOKEN,
                                     Config.BOT_NAME)
         self.logic = BotLogic(self.db, self.mm)
-        self.notification_manager = NotificationManager(self.db, self.mm)
+        self.notification_manager = NotificationManager(self.db, self.mm, self.logic)
         self.ws_listener = MattermostWebSocketListener(self)
         self.running = False
         self.web_runner = None

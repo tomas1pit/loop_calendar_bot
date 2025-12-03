@@ -4,6 +4,7 @@ import json
 import re
 from typing import Optional, List, Dict
 import pytz
+from dateutil.rrule import rruleset, rrulestr
 from config import Config
 from database import DatabaseManager, User, UserState, MeetingCache
 from encryption import EncryptionManager
@@ -117,6 +118,8 @@ class BotLogic:
             except Exception:
                 pass
 
+        events = self._expand_recurring_events(events, start, end)
+
         normalized: List[Dict] = []
         # Диагностика количества сырых событий
         try:
@@ -164,6 +167,7 @@ class BotLogic:
             logger.info(f"Normalized events for {user_email}: count={len(normalized)}")
         except Exception:
             pass
+        normalized.sort(key=lambda item: self._safe_parse_time_key(item.get("start_time")))
         return normalized
     
     async def get_current_meetings(self, mattermost_id: str, user_email: str,
@@ -182,6 +186,7 @@ class BotLogic:
                     result.append(m)
             except Exception:
                 continue
+        result.sort(key=lambda item: self._safe_parse_time_key(item.get("start_time")))
         return result
     
     def format_meetings_table(self, meetings: List[Dict]) -> str:
@@ -250,3 +255,96 @@ class BotLogic:
             return None
         except:
             return None
+
+    def _expand_recurring_events(self, events: List[Dict], window_start: datetime,
+                                 window_end: datetime) -> List[Dict]:
+        """Развернуть повторяющиеся встречи в пределах окна"""
+        expanded: List[Dict] = []
+        for event in events:
+            rules = self._normalize_rrules(event.get("rrule"))
+            if not rules:
+                expanded.append(event)
+                continue
+            try:
+                expanded.extend(
+                    self._generate_occurrence_events(event, rules, window_start, window_end)
+                )
+            except Exception:
+                expanded.append(event)
+        return expanded
+
+    def _normalize_rrules(self, rrule_value) -> List[str]:
+        if not rrule_value:
+            return []
+        normalized: List[str] = []
+        if isinstance(rrule_value, str):
+            cleaned = rrule_value.replace("\\r", "\n").splitlines()
+            normalized.extend(line.strip() for line in cleaned if line.strip())
+        elif isinstance(rrule_value, (list, tuple, set)):
+            for item in rrule_value:
+                normalized.extend(self._normalize_rrules(item))
+        return normalized
+
+    def _generate_occurrence_events(self, event: Dict, rules: List[str], window_start: datetime,
+                                     window_end: datetime) -> List[Dict]:
+        start_raw = event.get("start_time")
+        end_raw = event.get("end_time")
+        if not start_raw or not end_raw:
+            return [event]
+
+        start_dt = self._ensure_local_tz(datetime.fromisoformat(start_raw))
+        end_dt = self._ensure_local_tz(datetime.fromisoformat(end_raw))
+        duration = end_dt - start_dt
+
+        rset = rruleset()
+        for rule in rules:
+            try:
+                rset.rrule(rrulestr(rule, dtstart=start_dt))
+            except Exception:
+                continue
+
+        for exdate in event.get("exdate", []) or []:
+            try:
+                rset.exdate(self._ensure_local_tz(datetime.fromisoformat(exdate)))
+            except Exception:
+                continue
+
+        occurrences: List[Dict] = []
+        try:
+            for occ_start in rset.between(window_start, window_end, inc=True):
+                occ_end = occ_start + duration
+                if not self._intervals_overlap(occ_start, occ_end, window_start, window_end):
+                    continue
+                instance = dict(event)
+                instance["start_time"] = occ_start.isoformat()
+                instance["end_time"] = occ_end.isoformat()
+                occurrences.append(instance)
+        except Exception:
+            return [event]
+        if occurrences:
+            return occurrences
+        if self._intervals_overlap(start_dt, end_dt, window_start, window_end):
+            return [event]
+        return []
+
+    def _intervals_overlap(self, a_start: datetime, a_end: datetime,
+                           b_start: datetime, b_end: datetime) -> bool:
+        return a_start < b_end and b_start < a_end
+
+    def _ensure_local_tz(self, dt_obj: datetime) -> datetime:
+        if dt_obj.tzinfo is None:
+            return self.tz.localize(dt_obj)
+        return dt_obj.astimezone(self.tz)
+
+    def _safe_parse_time_key(self, value: Optional[str]) -> float:
+        try:
+            if not value:
+                return float("inf")
+            dt_obj = datetime.fromisoformat(value)
+            if dt_obj.tzinfo is None:
+                dt_obj = self.tz.localize(dt_obj)
+            else:
+                dt_obj = dt_obj.astimezone(self.tz)
+            return dt_obj.timestamp()
+        except Exception:
+            return float("inf")

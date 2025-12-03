@@ -495,17 +495,23 @@ class CalDAVManager:
         
         return f"""<?xml version="1.0" encoding="utf-8" ?>
 <C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
-  <D:prop>
-    <D:getetag/>
-    <C:calendar-data/>
-  </D:prop>
-  <C:filter>
-    <C:comp-filter name="VCALENDAR">
-      <C:comp-filter name="VEVENT">
-        <C:time-range start="{start_str}" end="{end_str}"/>
-      </C:comp-filter>
-    </C:comp-filter>
-  </C:filter>
+    <D:prop>
+        <D:getetag/>
+        <C:calendar-data>
+            <C:comp name="VCALENDAR">
+                <C:comp name="VEVENT">
+                    <C:expand start="{start_str}" end="{end_str}"/>
+                </C:comp>
+            </C:comp>
+        </C:calendar-data>
+    </D:prop>
+    <C:filter>
+        <C:comp-filter name="VCALENDAR">
+            <C:comp-filter name="VEVENT">
+                <C:time-range start="{start_str}" end="{end_str}"/>
+            </C:comp-filter>
+        </C:comp-filter>
+    </C:filter>
 </C:calendar-query>"""
     
     def _parse_events(self, xml_text: str) -> List[Dict]:
@@ -615,6 +621,32 @@ class CalDAVManager:
                             description = str(component.get("description", ""))
                             location = str(component.get("location", ""))
                             status = str(component.get("status", "CONFIRMED"))
+                            rrule_text = ""
+                            rrule_raw = component.get("rrule")
+                            if rrule_raw:
+                                try:
+                                    rrule_text = rrule_raw.to_ical().decode()
+                                except Exception:
+                                    rrule_text = str(rrule_raw)
+                            exdates: List[str] = []
+                            exdate_props = component.get('exdate') or []
+                            if not isinstance(exdate_props, list):
+                                exdate_props = [exdate_props]
+                            for ex_prop in exdate_props:
+                                try:
+                                    dts = getattr(ex_prop, 'dts', None)
+                                    if dts:
+                                        for dt_entry in dts:
+                                            dt_val = getattr(dt_entry, 'dt', dt_entry)
+                                            if not isinstance(dt_val, datetime):
+                                                dt_val = datetime.combine(dt_val, datetime.min.time())
+                                            if dt_val.tzinfo is None:
+                                                dt_val = tz.localize(dt_val)
+                                            else:
+                                                dt_val = dt_val.astimezone(tz)
+                                            exdates.append(dt_val.isoformat())
+                                except Exception:
+                                    continue
                             
                             # Extract VALARM components
                             alarms = []
@@ -651,6 +683,8 @@ class CalDAVManager:
                                 "organizer": organizer_email,
                                 "status": status,
                                 "alarms": alarms,
+                                "rrule": rrule_text,
+                                "exdate": exdates,
                             })
                             # Без подробного лога добавления события
                         except Exception as ve_inner:
@@ -683,6 +717,7 @@ class CalDAVManager:
                             uid = rex("UID") or f"fallback-{ib_idx}-{len(fallback_events)}"
                             summary = rex("SUMMARY") or "Без названия"
                             status = rex("STATUS") or "CONFIRMED"
+                            rrule_text = rex("RRULE")
                             tzid_start, dtstart_raw = rex_tz("DTSTART")
                             tzid_end, dtend_raw = rex_tz("DTEND")
                             dtstart = None
@@ -736,6 +771,36 @@ class CalDAVManager:
                                 # Extract description and location
                                 description = rex("DESCRIPTION")
                                 location = rex("LOCATION")
+
+                                # Extract EXDATE entries
+                                exdates: List[str] = []
+                                for ex_match in re.finditer(r"^EXDATE(?:;TZID=([^:]+))?:(.+)$", vevent_raw, re.MULTILINE):
+                                    ex_tzid = ex_match.group(1)
+                                    ex_values = ex_match.group(2).split(',')
+                                    for ex_val in ex_values:
+                                        ex_val = ex_val.strip()
+                                        if not ex_val:
+                                            continue
+                                        ex_dt = None
+                                        for fmt in ["%Y%m%dT%H%M%SZ", "%Y%m%dT%H%M%S", "%Y%m%dT%H%M"]:
+                                            try:
+                                                ex_dt = datetime.strptime(ex_val, fmt)
+                                                break
+                                            except Exception:
+                                                continue
+                                        if ex_dt is None:
+                                            continue
+                                        if ex_val.endswith('Z'):
+                                            ex_dt = pytz.UTC.localize(ex_dt.replace(tzinfo=None))
+                                        elif ex_tzid:
+                                            try:
+                                                tz_ex = pytz.timezone(ex_tzid)
+                                            except Exception:
+                                                tz_ex = tz_local
+                                            ex_dt = tz_ex.localize(ex_dt)
+                                        else:
+                                            ex_dt = tz_local.localize(ex_dt)
+                                        exdates.append(ex_dt.isoformat())
                                 
                                 # Extract VALARM triggers from regex
                                 alarms = []
@@ -775,6 +840,8 @@ class CalDAVManager:
                                     "organizer": organizer,
                                     "status": status,
                                     "alarms": alarms,
+                                    "rrule": rrule_text,
+                                    "exdate": exdates,
                                 })
                     if fallback_events:
                         events.extend(fallback_events)

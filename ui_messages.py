@@ -265,6 +265,14 @@ external@mail.com
             message += f"\nГде: {location}"
         return message
 
+    @staticmethod
+    def daily_digest(now: datetime, table: str) -> str:
+        date_str = now.strftime("%d.%m.%Y")
+        return (
+            f"**🗓️ Дайджест встреч на сегодня ({date_str})**\n\n"
+            f"{table}"
+        )
+
 
 class ButtonActions:
     """Константы для кнопок"""

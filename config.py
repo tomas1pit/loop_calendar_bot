@@ -25,6 +25,7 @@ class Config:
     # Bot behavior
     CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "60"))  # seconds
     REMINDER_MINUTES = int(os.getenv("REMINDER_MINUTES", "15"))  # minutes
+    DAILY_DIGEST_HOUR = int(os.getenv("DAILY_DIGEST_HOUR", "9"))  # hour in TZ
 
     # Debug flags
     CALDAV_LOG_FULL_RAW = os.getenv("CALDAV_LOG_FULL_RAW", "1") == "1"  # Включить полный вывод REPORT XML
